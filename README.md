@@ -22,7 +22,7 @@ Edits in the browser save straight back to the spreadsheet. Edits made in Excel 
 ### As a Claude Code plugin (recommended)
 
 ```bash
-/plugin marketplace add williamekeng/spreadsheet-visualization-skill
+/plugin marketplace add William-Ekeng/spreadsheet-visualization-skill
 ```
 
 then
