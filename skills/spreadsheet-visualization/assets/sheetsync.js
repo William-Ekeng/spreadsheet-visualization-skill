@@ -138,6 +138,12 @@ function inferFieldType(sheetData, column, sampleSize = 40) {
   const distinct = new Set(values.map(v => String(v)));
   if (distinct.size <= 12 && distinct.size < Math.max(2, values.length / 2)) return "select";
 
+  // Notes and description columns read badly in a single-line input. An
+  // embedded line break, or values long enough to be prose rather than a
+  // label, means the multi-line editor is the better fit.
+  const avgLen = values.reduce((a, v) => a + String(v).length, 0) / values.length;
+  if (values.some(v => String(v).includes("\n")) || avgLen > 60) return "textarea";
+
   return "text";
 }
 

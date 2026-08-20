@@ -98,17 +98,17 @@
 const store = new SheetStore();
 store.sheets = {
   Products: {
-    headers: ["Product", "Region", "Units", "Price", "Revenue", "Active"],
+    headers: ["Product", "Region", "Units", "Price", "Revenue", "Active", "Notes"],
     header_row: 1,
     meta: { Company: "Acme Corp", Updated: "2026-08-18" },
     formulas: { "3:Revenue": "=C3*D3" },
     rows: [
-      { _row: 2, Product: "Widget", Region: "North", Units: 320, Price: 12.5, Revenue: 4000, Active: "Yes" },
-      { _row: 3, Product: "Gadget", Region: "South", Units: 180, Price: 29.9, Revenue: 5382, Active: "Yes" },
-      { _row: 4, Product: "Doohickey", Region: "East", Units: 260, Price: 8.75, Revenue: 2275, Active: "No" },
-      { _row: 5, Product: "Gizmo", Region: "West", Units: 95, Price: 45.0, Revenue: 4275, Active: "Yes" },
-      { _row: 6, Product: "Whatsit", Region: "North", Units: 410, Price: 6.2, Revenue: 2542, Active: "Yes" },
-      { _row: 7, Product: "Thingamajig", Region: "South", Units: 75, Price: 60.0, Revenue: 4500, Active: "No" },
+      { _row: 2, Product: "Widget", Region: "North", Units: 320, Price: 12.5, Revenue: 4000, Active: "Yes", Notes: "Reliable seller across all four regions. Reorder point is 50 units; lead time from the supplier runs about two weeks." },
+      { _row: 3, Product: "Gadget", Region: "South", Units: 180, Price: 29.9, Revenue: 5382, Active: "Yes", Notes: "Margin is thin at the current price point. Marketing wants a bundle with Gizmo for Q4." },
+      { _row: 4, Product: "Doohickey", Region: "East", Units: 260, Price: 8.75, Revenue: 2275, Active: "No", Notes: "Discontinued pending a packaging redesign.\nExpected back in stock next quarter." },
+      { _row: 5, Product: "Gizmo", Region: "West", Units: 95, Price: 45.0, Revenue: 4275, Active: "Yes", Notes: "Premium tier item. Low volume but highest per-unit margin in the catalog." },
+      { _row: 6, Product: "Whatsit", Region: "North", Units: 410, Price: 6.2, Revenue: 2542, Active: "Yes", Notes: "High-volume, low-cost. Good candidate for a subscribe-and-save option." },
+      { _row: 7, Product: "Thingamajig", Region: "South", Units: 75, Price: 60.0, Revenue: 4500, Active: "No", Notes: "Seasonal item, paused outside the holiday window." },
     ],
   },
   Archive: { headers: ["Product", "Year"], header_row: 1, meta: {}, formulas: {}, rows: [{ _row: 2, Product: "Widget Classic", Year: 2019 }] },
@@ -181,7 +181,9 @@ Collapsible(steps, { num: 2, title: "Build validation runs", subtitle: "nobody t
 }});
 Collapsible(steps, { num: 3, title: "Approve, then promote", subtitle: "one click", tag: "GATE", tagClass: "ss-badge-accent", content: "A human decision point between environments." });
 
-RecordForm(document.getElementById("form"), store, { sheet: "Products", row: store.sheets.Products.rows[0], columns: ["Product", "Region", "Units", "Active"] });
+// Notes has multi-line values and a long average length, so it infers as
+// "textarea" and the form renders the multi-line editor for it.
+RecordForm(document.getElementById("form"), store, { sheet: "Products", row: store.sheets.Products.rows[0], columns: ["Product", "Region", "Units", "Active", "Notes"] });
 
 /* --- theme switcher ---------------------------------------------------- */
 document.getElementById("themeSelect").onchange = e => {

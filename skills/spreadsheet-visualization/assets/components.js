@@ -15,7 +15,8 @@
  *   SearchBox   -- text input emitting a row-filter predicate
  *   DataGrid    -- paginated, sortable, editable, formula-aware table
  *   ChartBlock  -- Chart.js chart over sheet rows (requires chart.js loaded)
- *   FieldInput  -- one typed editor (text/number/date/select/checkbox)
+ *   FieldInput  -- one typed editor (text/number/date/select/checkbox/
+ *                  toggle/textarea)
  *   RecordForm  -- edit a single row as a form of FieldInputs
  *   StatusDot   -- connection indicator for the store
  *
@@ -143,6 +144,7 @@ function DataGrid(container, store, opts = {}) {
     addable = false,
     onRowClick,               // (row) => void, e.g. to open a RecordForm
     format = {},              // {column: v => string} display formatters
+    types = {},               // {column: "select"|"checkbox"|...} per-column override of inferFieldType, as in RecordForm
   } = opts;
 
   const root = el("div", "ss-grid");
@@ -208,6 +210,11 @@ function DataGrid(container, store, opts = {}) {
       pagerEl.appendChild(el("span", "", `${rows.length} match${rows.length === 1 ? "" : "es"}`));
     }
 
+    // Column types for the inline picklist/checkbox editors, resolved once
+    // per render rather than per cell, since inferFieldType samples rows.
+    const colTypes = {};
+    cols.forEach(h => { colTypes[h] = types[h] || inferFieldType(data, h); });
+
     // table
     table.textContent = "";
     const thead = el("thead");
@@ -239,6 +246,34 @@ function DataGrid(container, store, opts = {}) {
           td.className = "ss-formula";
           td.title = formula;
           td.textContent = display;
+        } else if (isEditable(h) && colTypes[h] === "select") {
+          // Native <select>, not a rebuilt one. A row's compact height
+          // leaves no room for a custom arrow without fighting the cell
+          // padding, and the native control already reads as a dropdown.
+          const sel = document.createElement("select");
+          sel.className = "ss-cell-select";
+          const current = String(row[h] ?? "");
+          const values = columnValues(data, h);
+          // A cell holding a value outside the column's known set (stale
+          // data, a typo) shows it as-is instead of silently snapping to
+          // whichever option happens to be first.
+          if (current && !values.includes(current)) values.unshift(current);
+          values.forEach(v => sel.appendChild(new Option(v, v)));
+          sel.value = current;
+          sel.addEventListener("click", e => e.stopPropagation());
+          sel.addEventListener("change", () => store.saveCell(sheetName(), row._row, h, sel.value));
+          td.appendChild(sel);
+        } else if (isEditable(h) && colTypes[h] === "checkbox") {
+          // Same rebuilt checkbox FieldInput and RecordForm use, so a
+          // boolean column looks identical in the grid and in a form.
+          td.classList.add("ss-cell-check");
+          const cb = document.createElement("input");
+          cb.type = "checkbox";
+          cb.className = "ss-input";
+          cb.checked = ["yes", "true", "1", "y"].includes(String(row[h] ?? "").trim().toLowerCase());
+          cb.addEventListener("click", e => e.stopPropagation());
+          cb.addEventListener("change", () => store.saveCell(sheetName(), row._row, h, cb.checked ? "Yes" : "No"));
+          td.appendChild(cb);
         } else if (isEditable(h)) {
           td.contentEditable = "true";
           td.textContent = display;
@@ -501,6 +536,7 @@ function ChartBlock(container, store, opts = {}) {
 
 function FieldInput(container, { type = "text", value = "", options = [], onChange } = {}) {
   let input;
+  let autoGrow = null;
   if (type === "select") {
     input = document.createElement("select");
     options.forEach(o => input.appendChild(new Option(o, o)));
@@ -540,6 +576,52 @@ function FieldInput(container, { type = "text", value = "", options = [], onChan
     input.onclick = toggle;
     input.onkeydown = e => { if (e.key === " " || e.key === "Enter") { e.preventDefault(); toggle(); } };
     container.appendChild(input);
+  } else if (type === "textarea") {
+    input = document.createElement("textarea");
+    input.value = value ?? "";
+    input.rows = 3;
+    input.classList.add("ss-input");
+    // Height tracks the content, since base.css turns the drag handle off.
+    // A fixed 3-row box would clip or inner-scroll on anything longer.
+    autoGrow = () => {
+      // Sets overflow explicitly rather than leaving it on overflow-y:auto.
+      // Under a fractional device pixel ratio (the 0.667px border here is
+      // the tell) scrollHeight and clientHeight round to the same integer
+      // while the sub-pixel layout still overflows by a hair, and the
+      // browser paints a scrollbar for content that visibly fits. Measuring
+      // with scrolling off and deciding here avoids that.
+      // maxHeight must be read in-DOM on every call: read once before
+      // appendChild it resolves to "none" and the cap silently never fires.
+      const maxH = parseFloat(getComputedStyle(input).maxHeight) || Infinity;
+      input.style.overflowY = "hidden";
+      input.style.height = "auto";
+      const border = input.offsetHeight - input.clientHeight; // border-box's border, since scrollHeight excludes it
+      const contentHeight = input.scrollHeight + border;
+      if (contentHeight > maxH) { input.style.height = maxH + "px"; input.style.overflowY = "auto"; }
+      else { input.style.height = contentHeight + "px"; }
+    };
+    input.addEventListener("input", autoGrow);
+    if (onChange) {
+      input.addEventListener("blur", () => onChange(input.value));
+      // Enter inserts a newline here (unlike single-line text) -- only
+      // Ctrl/Cmd+Enter commits, since a multi-line field's whole point is
+      // holding line breaks.
+      input.addEventListener("keydown", e => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) { e.preventDefault(); input.blur(); } });
+    }
+    container.appendChild(input);
+    autoGrow(); // must run in-DOM: scrollHeight needs layout
+    // Typing isn't the only thing that changes the line count. A narrower
+    // column wraps more lines, so re-measure when the width changes too:
+    // a Collapsible opening, a layout breakpoint, a sidebar toggling.
+    // Only width deltas count, or autoGrow's own height writes would
+    // retrigger the observer.
+    let lastWidth = input.getBoundingClientRect().width;
+    const ro = new ResizeObserver(() => {
+      const w = input.getBoundingClientRect().width;
+      if (Math.abs(w - lastWidth) > 0.5) { lastWidth = w; autoGrow(); }
+    });
+    ro.observe(input);
+    input._roDisconnect = () => ro.disconnect();
   } else {
     input = document.createElement("input");
     input.type = type === "number" ? "number" : type === "date" ? "date" : "text";
@@ -564,9 +646,9 @@ function FieldInput(container, { type = "text", value = "", options = [], onChan
     set: v => {
       if (type === "toggle") input.setAttribute("aria-checked", String(!!v));
       else if (type === "checkbox") input.checked = !!v;
-      else input.value = v;
+      else { input.value = v; if (autoGrow) autoGrow(); }
     },
-    destroy: () => input.remove(),
+    destroy: () => { input._roDisconnect && input._roDisconnect(); input.remove(); },
   };
 }
 

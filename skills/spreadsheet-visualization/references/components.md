@@ -28,8 +28,11 @@ await store.deleteRow(sheet, rowIdx)
 ```
 
 Helpers: `inferFieldType(sheetData, column)` returns `"number" | "date" |
-"checkbox" | "select" | "text"`; `columnValues(sheetData, column)` returns
-sorted distinct strings (for select options / filter dropdowns).
+"checkbox" | "select" | "textarea" | "text"`. It picks `"textarea"` when the
+sampled values contain a line break or average over 60 characters, which
+catches notes and description columns without catching short labels.
+`columnValues(sheetData, column)` returns sorted distinct strings (for select
+options / filter dropdowns).
 
 ## Blocks (components.js)
 
@@ -44,10 +47,10 @@ without rebuilding blocks.
 | `MetaPanel(el, store, opts)` | key/value strip from `sheet.meta` | `sheet`; hides itself when meta is empty |
 | `StatTile(el, store, opts)` | one live aggregate number | `label`, `sheet`, `compute(rows, sheetData)`, `format(v)` |
 | `SearchBox(el, opts)` | text search producing a row predicate | `columns` (limit searched fields), `onChange(predicateOrNull)`; renders a leading search icon; extra: `.clear()` |
-| `DataGrid(el, store, opts)` | paginated sortable editable table | `sheet`, `columns` (subset+order), `editable` (bool or array of column names), `pageSize`, `deletable`, `addable`, `onRowClick(row)`, `format` ({col: fn}); renders as one connected bordered card with horizontal-only row dividers (no vertical column lines); extras: `.setFilter(fn)`, `.setPage(n)`, `.refresh()` |
+| `DataGrid(el, store, opts)` | paginated sortable editable table | `sheet`, `columns` (subset+order), `editable` (bool or array of column names), `pageSize`, `deletable`, `addable`, `onRowClick(row)`, `format` ({col: fn}), `types` ({col: type}, overrides `inferFieldType` per column, same convention as `RecordForm`). An editable column typed `"select"` renders an inline dropdown of that column's distinct values; one typed `"checkbox"` renders the same checkbox `FieldInput` uses. Both write on change. Every other editable column stays a contentEditable text cell. Renders as one connected bordered card with horizontal-only row dividers (no vertical column lines); extras: `.setFilter(fn)`, `.setPage(n)`, `.refresh()` |
 | `ChartBlock(el, store, opts)` | Chart.js chart | `sheet`, `x`, `y`, `type`, `aggregate` (`"sum"\|"avg"\|"count"` groups by x, usually what categorical charts want), `topN` (default 30), `controls` (adds type/x/y dropdowns), `label`, `centerText` (doughnut only, draws the live sum + label in the ring's center); extra: `.setFields(x, y)` |
-| `FieldInput(el, opts)` | one typed editor | `type` (from `inferFieldType`, or `"toggle"`, an on/off switch not offered by inference but usable directly), `value`, `options`; extras: `.get()`, `.set(v)` |
-| `RecordForm(el, store, opts)` | edit one row as a form | `sheet`, `row`, `columns`, `types` (overrides), `onSaved(col, value)`; skips formula cells; autosaves per field as it commits (blur for text/number/date, change for select, click for toggle). No Save/Cancel, same live-sync convention as DataGrid |
+| `FieldInput(el, opts)` | one typed editor | `type` (from `inferFieldType`, plus `"toggle"`, an on/off switch not offered by inference but usable directly), `value`, `options`; extras: `.get()`, `.set(v)`. `"textarea"` renders a multi-line `<textarea class="ss-input">` instead of the single-line `<input>`. It grows with its content from 80px to 320px, then scrolls; the browser's drag-resize handle is off, so height is always driven by the text. Commits on blur or Ctrl/Cmd+Enter, since plain Enter inserts a newline |
+| `RecordForm(el, store, opts)` | edit one row as a form | `sheet`, `row`, `columns`, `types` (overrides), `onSaved(col, value)`; skips formula cells; autosaves per field as it commits (blur for text/number/date/textarea, change for select, click for toggle). No Save/Cancel, same live-sync convention as DataGrid |
 | `StatusDot(el, store)` | connection indicator | despite the name, renders an icon rather than a colored dot: a static checkmark (success green) when connected, a spinning loader (warn amber) while reconnecting. A color-only dot can't distinguish "connected" from "currently retrying"; an animated icon can. Respects `prefers-reduced-motion` (icon/color alone still carry the state without the spin). |
 | `Collapsible(el, opts)` | expandable card / step timeline | `num`, `title`, `subtitle`, `tag` + `tagClass` (badge on the right), `open`, `content` (string, Node, or `(bodyEl) => void` to render data-bound blocks inside); extras: `.body`, `.setOpen(v)` |
 | `SideNav(el, items)` | sticky sidebar nav with scrollspy | items: `[{label, target: "#section-id"}]`; highlights the section in view, smooth-scrolls on click |

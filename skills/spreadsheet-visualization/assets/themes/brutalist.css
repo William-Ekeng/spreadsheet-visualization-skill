@@ -75,9 +75,12 @@
    as raw poured concrete, which fits brutalism harder than the yellow
    highlighter does here (that stays reserved for actual active/selected
    state elsewhere: badge-accent, header sort arrows, focus rings).
-   Everything else (outline/secondary/ghost buttons, unchecked checkbox)
-   keeps the plain black shadow, which reads fine against a light fill. */
+   The checkbox is a 16px control, not a card, so the base --ss-shadow (4px,
+   tuned for panels) is oversized on it. Both states pin to the 2px offset
+   .ss-btn uses. Only the color changes between them, never the offset, or
+   checked and unchecked would read as two differently sized controls. */
 .ss-btn-primary { box-shadow: 2px 2px 0 #9c9c9c; }
+input[type="checkbox"].ss-input { box-shadow: 2px 2px 0 #000000; }
 input[type="checkbox"].ss-input:checked { box-shadow: 2px 2px 0 #9c9c9c; }
 
 /* The switch thumb is always a circle (base.css), but --ss-shadow here is

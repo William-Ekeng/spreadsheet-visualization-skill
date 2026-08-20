@@ -6,6 +6,9 @@ __pycache__/
 # Packaged skill bundles
 *.skill
 
+# Local design/QA tool (copies of skill assets kept in sync via sync-assets.sh)
+dev/design-gallery/
+
 # OS noise
 .DS_Store
 Thumbs.db
