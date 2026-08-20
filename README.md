@@ -1,26 +1,21 @@
 # Spreadsheet Visualization Skill
 
-A [Claude Code](https://claude.com/claude-code) skill that turns a spreadsheet (`.xlsx` / `.xlsm` / `.xls` / `.csv`) into a **live, editable HTML app** — with the spreadsheet file itself acting as the backend database.
+A [Claude Code](https://claude.com/claude-code) skill that turns a spreadsheet (`.xlsx` / `.xlsm` / `.xls` / `.csv`) into a live, editable HTML app. The spreadsheet file itself is the backend database.
 
-A local Python server reads the file, serves it as JSON, watches it for external edits (e.g. someone editing it in Excel), and writes browser edits straight back to the file. Both sides read and write the same file, so the spreadsheet is always the single source of truth — no separate database.
+A local Python server reads the file, serves it as JSON, watches it for external edits (someone editing it in Excel, say), and writes browser edits straight back to the file. Both sides read and write the same file, so the spreadsheet stays the single source of truth. There is no separate database.
 
 ## What it does
 
 Tell Claude something like:
 
-- *"Turn my budget sheet into a webpage"*
-- *"I want a nicer way to look at and edit this csv"*
-- *"Build a UI on top of this spreadsheet"*
-- *"Make me a tool to manage this inventory file"*
+- "Turn my budget sheet into a webpage"
+- "I want a nicer way to look at and edit this csv"
+- "Build a UI on top of this spreadsheet"
+- "Make me a tool to manage this inventory file"
 
-Claude inspects the data, asks what you want to *do* with it, and composes a purpose-built UI from the skill's building blocks — rather than forcing every sheet into one fixed dashboard template:
+Claude inspects the data, asks what you want to do with it, and composes a UI from the skill's building blocks instead of forcing every sheet into one fixed dashboard template. An inventory sheet gets search plus an editable grid and a record form. A budget gets stat tiles, a chart, and a compact grid. A reference list gets search over a trimmed read-only grid. A time log gets a fast-entry form with recent rows below.
 
-- **Manage/edit records** (inventory, CRM, tasks) → search + editable grid + record form
-- **Monitor numbers** (budget, sales, KPIs) → stat tiles + chart + compact grid
-- **Look things up** (reference lists, logs) → search + trimmed read-only grid
-- **Append entries** (time log, expenses) → fast-entry form + recent-rows grid
-
-Edits in the browser save straight back to the spreadsheet; edits made in Excel show up in the browser.
+Edits in the browser save straight back to the spreadsheet. Edits made in Excel show up in the browser.
 
 ## Installation
 
@@ -38,12 +33,12 @@ then
 
 ### Manual
 
-Copy `skills/spreadsheet-visualization/` into your project's `.claude/skills/` directory (or `~/.claude/skills/` for all projects).
+Copy `skills/spreadsheet-visualization/` into your project's `.claude/skills/` directory, or `~/.claude/skills/` for all projects.
 
 ## Requirements
 
-- Python 3.9+ with `openpyxl` (for Excel formats; CSV works with the standard library)
-- The spreadsheet file and the browser must be on the same machine (or LAN) — the server needs direct filesystem access to the file
+- Python 3.9+ with `openpyxl` for Excel formats. CSV works with the standard library alone.
+- The spreadsheet file and the browser must be on the same machine (or LAN). The server needs direct filesystem access to the file.
 
 ## Repository layout
 
@@ -56,9 +51,9 @@ skills/
       sync_server.py     Local server: file <-> JSON <-> browser, two-way sync
     assets/
       sheetsync.js       Browser data-sync layer
-      components.js      Component kit (grid, search, tiles, chart, forms…)
+      components.js      Component kit (grid, search, tiles, chart, forms)
       base.css           Shared styling
-      themes/            Optional visual themes (lofi, cozy, retro, …)
+      themes/            Optional visual themes (lofi, cozy, retro, ...)
     references/          Deep-dive docs Claude loads on demand
 ```
 
