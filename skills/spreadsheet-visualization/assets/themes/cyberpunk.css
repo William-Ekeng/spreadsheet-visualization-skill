@@ -1,0 +1,106 @@
+/* THEME: cyberpunk -- load after base.css.
+ * Neon on deep violet, terminal type, glow instead of shadow.
+ *
+ * Rebuilt from a readability complaint against the first version, which
+ * measured out to real WCAG failures, not just a subjective "feels dark"
+ * impression -- computed with the standard relative-luminance contrast
+ * formula (see references/theming.md for the full numbers and method):
+ *   - --ss-border was 1.40:1 against --ss-panel (background research:
+ *     WCAG 1.4.11 requires 3:1 for non-text UI boundaries) -- panel edges
+ *     and input borders were essentially invisible.
+ *   - --ss-th-bg was 1.03:1 against --ss-panel -- table headers didn't
+ *     read as a different surface at all.
+ *   - --ss-bg and --ss-panel were only ~1.05:1 apart -- cards barely
+ *     lifted off the page, so the whole UI read as one undifferentiated
+ *     dark mass (this is *why* the fix needed a real numeric pass rather
+ *     than nudging hex values by eye: near-black lightness is extremely
+ *     compressed by the sRGB gamma curve, so two colors that look
+ *     obviously different as swatches can still be ~1.05:1 apart in
+ *     actual contrast -- small HSL lightness deltas do almost nothing
+ *     down here, the jump has to be much larger than intuition suggests).
+ *   - --ss-danger and --ss-accent were the identical hex (#ff2975) --
+ *     destructive and "this is branded/highlighted" read as the same
+ *     signal, which is a legibility problem in the sense that matters
+ *     most (you can't tell two different meanings apart).
+ * Background research (see references/theming.md sources): avoid
+ * near-pure-black bases (harsh, glare-prone); keep body/secondary text on
+ * plain light neutrals, not neon, and reserve neon for accents/CTAs only;
+ * don't overuse glow on already-legible text (previously applied to
+ * every badge and every StatTile number regardless of meaning).
+ *
+ * Surfaces now step bg(L6%) -> th-bg(L15%) -> panel(L26%) at the same
+ * hue/saturation, individually verified against each other rather than
+ * assumed from the HSL numbers. Chart palette validated (dataviz six
+ * checks) against the new panel #38285d.
+ */
+
+:root {
+  --ss-bg: #0d0915;
+  --ss-panel: #38285d;
+  --ss-border: #8774b4;
+  --ss-text: #e8ddff;
+  --ss-muted: #a89bc9;
+  --ss-accent: #ff66a0;
+  --ss-accent-bg: #523066;
+  --ss-danger: #ff7a86;
+  --ss-warn: #e2861a;
+  --ss-formula-bg: #2f1d16;
+  --ss-th-bg: #201736;
+
+  --ss-badge-blue: #29b6e8;
+  --ss-badge-amber: #e2861a;
+  --ss-badge-purple: #c584ff;
+  --ss-badge-green: #17c467;
+  --ss-badge-red: #ff7a86;
+  --ss-badge-gray: #a89bc9;
+
+  --ss-font-body: "Segoe UI", system-ui, sans-serif;
+  --ss-font-display: Consolas, "Courier New", monospace;
+  --ss-font-mono: Consolas, "Courier New", monospace;
+  --ss-heading-case: uppercase;
+  --ss-heading-weight: 700;
+  --ss-heading-tracking: 0.08em;
+
+  --ss-radius: 2px;
+  --ss-radius-sm: 2px;
+  --ss-border-w: 1px;
+
+  --ss-shadow: 0 0 0 1px rgba(255, 102, 160, 0.08), 0 0 18px rgba(135, 116, 180, 0.12);
+  --ss-shadow-pop: 0 0 24px rgba(255, 102, 160, 0.25);
+
+  --ss-pad: 16px;
+  --ss-gap: 16px;
+  --ss-motion: 0.12s;
+
+  --ss-chart-1: #0fa35a;
+  --ss-chart-2: #1a93b8;
+  --ss-chart-3: #74a30a;
+  --ss-chart-4: #a63ef0;
+  --ss-chart-5: #d94a7c;
+  --ss-chart-6: #c96b0f;
+}
+
+/* Effects tokens can't express -------------------------------------------- */
+
+/* Neon edge reserved for genuine active/focus state, not decoration --
+   background research is explicit that neon-everywhere causes visual
+   fatigue and undermines its own signal value. */
+.ss-tabs button.active, .ss-segmented button.active {
+  box-shadow: 0 0 10px color-mix(in srgb, var(--ss-accent) 45%, transparent);
+  text-shadow: 0 0 6px color-mix(in srgb, var(--ss-accent) 55%, transparent);
+}
+.ss-search:focus, .ss-input:focus {
+  /* wider neon glow instead of the base's tight 3px ring */
+  box-shadow: 0 0 12px color-mix(in srgb, var(--ss-accent) 35%, transparent);
+}
+/* Glow only on badges that carry real meaning (color != neutral default);
+   a plain neutral badge's text shouldn't blur, it's not signaling anything. */
+.ss-badge-destructive, .ss-badge-success, .ss-badge-warning, .ss-badge-accent {
+  text-shadow: 0 0 5px color-mix(in srgb, currentColor 50%, transparent);
+}
+
+/* scanline whisper on panels */
+.ss-panel, .ss-collapse {
+  background-image: repeating-linear-gradient(
+    0deg, transparent 0 2px, rgba(255, 255, 255, 0.012) 2px 4px);
+}

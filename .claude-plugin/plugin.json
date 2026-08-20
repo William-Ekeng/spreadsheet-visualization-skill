@@ -1,0 +1,22 @@
+{
+  "name": "spreadsheet-visualization",
+  "version": "1.0.0",
+  "description": "Turn a spreadsheet (.xlsx/.xlsm/.xls/.csv) into a live, editable HTML app — the spreadsheet file acts as the backend database and a local Python server keeps the browser UI and the file in sync in both directions.",
+  "author": {
+    "name": "William Ekeng"
+  },
+  "repository": "https://github.com/williamekeng/spreadsheet-visualization-skill",
+  "license": "MIT",
+  "keywords": [
+    "spreadsheet",
+    "excel",
+    "csv",
+    "dashboard",
+    "visualization",
+    "live-sync",
+    "html"
+  ],
+  "skills": [
+    "./skills/spreadsheet-visualization"
+  ]
+}

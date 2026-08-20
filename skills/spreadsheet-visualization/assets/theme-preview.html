@@ -1,0 +1,201 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Theme preview</title>
+<link rel="stylesheet" href="base.css">
+<link rel="stylesheet" id="themeLink" disabled>
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<script src="sheetsync.js"></script>
+<script src="components.js"></script>
+<style>
+  .switcher { position: fixed; top: 12px; right: 16px; z-index: 10; display: flex; gap: 8px; align-items: center; }
+  .preview-note { max-width: 640px; }
+  section { margin-bottom: 28px; }
+</style>
+</head>
+<body>
+<!--
+  Kitchen sink for theme review: every block rendered once against sample
+  data, with a live theme switcher. Open directly (no server needed) --
+  writes mutate the in-memory sample so editing/adding/deleting can be
+  felt per theme. Charts re-read tokens on refresh after each switch.
+-->
+
+<div class="switcher ss-panel" style="padding:8px 12px;">
+  <span class="ss-muted">Theme</span>
+  <select id="themeSelect" class="ss-input" style="width:auto;">
+    <option value="default">default</option>
+    <option value="default-dark">default dark</option>
+    <option value="brutalist">brutalist</option>
+    <option value="retro">retro</option>
+    <option value="lofi">lofi</option>
+    <option value="cozy">cozy</option>
+    <option value="cyberpunk">cyberpunk</option>
+  </select>
+</div>
+
+<h1>Theme preview</h1>
+<p class="ss-muted preview-note">Every building block once, against sample data.
+   Switch themes top-right — one theme must transpire through all of it:
+   color, type, shape, depth, density, motion, and the chart palette.</p>
+
+<section>
+  <div class="ss-row" style="align-items:center;">
+    <div class="ss-shrink" id="tabs"></div>
+    <div class="ss-shrink" id="segmented"></div>
+    <div class="ss-shrink ss-row" style="gap:8px;">
+      <span class="ss-badge ss-shrink">Source · git</span>
+      <span class="ss-badge ss-shrink">Artifact · binary</span>
+      <span class="ss-badge ss-badge-accent ss-shrink">Env · live</span>
+      <span class="ss-badge ss-badge-success ss-shrink">PASS</span>
+      <span class="ss-badge ss-badge-destructive ss-shrink">FAIL</span>
+    </div>
+    <div class="ss-shrink" id="status"></div>
+  </div>
+</section>
+
+<section class="ss-panel">
+  <div id="flowchart"></div>
+</section>
+
+<section class="ss-row" id="tiles"></section>
+
+<section class="ss-row">
+  <div class="ss-panel"><h2>Revenue by product</h2><div id="chartBar"></div></div>
+  <div class="ss-panel"><h2>Share by region</h2><div id="chartPie"></div></div>
+</section>
+
+<section class="ss-panel">
+  <div class="ss-row" style="align-items:center; margin-bottom:10px;">
+    <h2 class="ss-shrink" style="margin:0;">Products</h2>
+    <div style="max-width:280px;" id="search"></div>
+  </div>
+  <div id="grid"></div>
+</section>
+
+<section id="steps"></section>
+
+<section class="ss-row">
+  <div class="ss-panel">
+    <h2>Fact table</h2>
+    <table class="ss-facts"><thead><tr><th>Fact</th><th>Value</th><th>Source</th></tr></thead>
+    <tbody>
+      <tr><td class="fact-label">Full type name</td><td><code>BHM.CRM.CreateStockLevel</code></td><td class="fact-source">plugin record</td></tr>
+      <tr><td class="fact-label">Registered into</td><td><code>BHMEXCRMDEV</code></td><td class="fact-source">2026-07-28</td></tr>
+      <tr><td class="fact-label">Source in git</td><td><span class="ss-badge ss-badge-destructive">none</span></td><td class="fact-source">absent from csproj</td></tr>
+    </tbody></table>
+  </div>
+  <div class="ss-panel">
+    <h2>Record form</h2>
+    <div id="form"></div>
+  </div>
+</section>
+
+<script>
+/* Offline mock store: real SheetStore, no polling; writes mutate the sample
+   data and notify subscribers so every interaction works without a server. */
+const store = new SheetStore();
+store.sheets = {
+  Products: {
+    headers: ["Product", "Region", "Units", "Price", "Revenue", "Active"],
+    header_row: 1,
+    meta: { Company: "Acme Corp", Updated: "2026-08-18" },
+    formulas: { "3:Revenue": "=C3*D3" },
+    rows: [
+      { _row: 2, Product: "Widget", Region: "North", Units: 320, Price: 12.5, Revenue: 4000, Active: "Yes" },
+      { _row: 3, Product: "Gadget", Region: "South", Units: 180, Price: 29.9, Revenue: 5382, Active: "Yes" },
+      { _row: 4, Product: "Doohickey", Region: "East", Units: 260, Price: 8.75, Revenue: 2275, Active: "No" },
+      { _row: 5, Product: "Gizmo", Region: "West", Units: 95, Price: 45.0, Revenue: 4275, Active: "Yes" },
+      { _row: 6, Product: "Whatsit", Region: "North", Units: 410, Price: 6.2, Revenue: 2542, Active: "Yes" },
+      { _row: 7, Product: "Thingamajig", Region: "South", Units: 75, Price: 60.0, Revenue: 4500, Active: "No" },
+    ],
+  },
+  Archive: { headers: ["Product", "Year"], header_row: 1, meta: {}, formulas: {}, rows: [{ _row: 2, Product: "Widget Classic", Year: 2019 }] },
+};
+store.saveCell = async (sheet, row, column, value) => {
+  const r = store.sheets[sheet].rows.find(r => r._row === row);
+  if (r) r[column] = value;
+  store._emit();
+};
+store.addRow = async (sheet, values) => {
+  const rows = store.sheets[sheet].rows;
+  rows.push({ _row: Math.max(0, ...rows.map(r => r._row)) + 1, ...values });
+  store._emit();
+};
+store.deleteRow = async (sheet, row) => {
+  const s = store.sheets[sheet];
+  s.rows = s.rows.filter(r => r._row !== row);
+  store._emit();
+};
+
+const money = v => "$" + (Number(v) || 0).toLocaleString();
+
+Tabs(document.getElementById("tabs"), ["Products", "Archive"], { onSelect: () => {} });
+Tabs(document.getElementById("segmented"), ["Today", "With pipeline"], { variant: "segmented", onSelect: () => {} });
+StatusDot(document.getElementById("status"), store);
+
+FlowChart(document.getElementById("flowchart"), {
+  direction: "LR",
+  nodes: [
+    { id: "laptop", label: "Laptop" },
+    { id: "build", label: "Build" },
+    { id: "dev", label: "DEV", variant: "accent" },
+    { id: "prd", label: "PRD", variant: "accent" },
+    { id: "git", label: "git (maybe, later)", variant: "ghost" },
+  ],
+  edges: [
+    { from: "laptop", to: "build" },
+    { from: "build", to: "dev" },
+    { from: "dev", to: "prd", label: "on approve" },
+    { from: "build", to: "git" },
+  ],
+});
+
+const tiles = document.getElementById("tiles");
+StatTile(tiles, store, { label: "Total revenue", sheet: "Products", compute: agg.sum("Revenue"), format: money });
+StatTile(tiles, store, { label: "Units", sheet: "Products", compute: agg.sum("Units") });
+StatTile(tiles, store, { label: "Avg price", sheet: "Products", compute: agg.avg("Price"), format: v => "$" + v.toFixed(2) });
+StatTile(tiles, store, { label: "Regions", sheet: "Products", compute: agg.distinct("Region") });
+
+const charts = [
+  ChartBlock(document.getElementById("chartBar"), store, { sheet: "Products", x: "Product", y: "Revenue", aggregate: "sum", type: "bar" }),
+  ChartBlock(document.getElementById("chartPie"), store, { sheet: "Products", x: "Region", y: "Revenue", aggregate: "sum", type: "doughnut" }),
+];
+
+const grid = DataGrid(document.getElementById("grid"), store, {
+  sheet: "Products", editable: true, addable: true, deletable: true, pageSize: 10,
+  format: { Revenue: money, Price: v => "$" + Number(v).toFixed(2) },
+});
+SearchBox(document.getElementById("search"), { onChange: f => grid.setFilter(f) });
+
+const steps = document.getElementById("steps");
+Collapsible(steps, { num: 1, title: "Branch and push", subtitle: "feature/stock-level", tag: "HUMAN", content: "Standard git flow; nothing automated yet." });
+Collapsible(steps, { num: 2, title: "Build validation runs", subtitle: "nobody triggers it", tag: "AUTO", tagClass: "ss-badge-success", open: true, content: body => {
+  const p = document.createElement("p");
+  p.textContent = "The branch policy queues the pipeline against a preview merge, so it tests what the code will look like after merging.";
+  body.appendChild(p);
+  const row = document.createElement("div"); row.className = "ss-row";
+  body.appendChild(row);
+  StatTile(row, store, { label: "Products live", sheet: "Products", compute: rows => rows.length });
+}});
+Collapsible(steps, { num: 3, title: "Approve, then promote", subtitle: "one click", tag: "GATE", tagClass: "ss-badge-accent", content: "A human decision point between environments." });
+
+RecordForm(document.getElementById("form"), store, { sheet: "Products", row: store.sheets.Products.rows[0], columns: ["Product", "Region", "Units", "Active"] });
+
+/* --- theme switcher ---------------------------------------------------- */
+document.getElementById("themeSelect").onchange = e => {
+  const name = e.target.value;
+  const link = document.getElementById("themeLink");
+  document.documentElement.removeAttribute("data-theme");
+  if (name === "default") { link.disabled = true; link.removeAttribute("href"); }
+  else if (name === "default-dark") { link.disabled = true; link.removeAttribute("href"); document.documentElement.setAttribute("data-theme", "dark"); }
+  else { link.href = `themes/${name}.css`; link.disabled = false; }
+  // charts read tokens at render time; repaint once the stylesheet applies
+  setTimeout(() => charts.forEach(c => c.refresh()), 80);
+};
+
+store._emit();
+</script>
+</body>
+</html>

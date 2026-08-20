@@ -1,0 +1,64 @@
+/* THEME: lofi -- load after base.css.
+ * Quiet, sketchy, typewriter: monospace body, dashed hairlines, muted UI
+ * chrome. Note the chart palette is deliberately MORE saturated than the
+ * chrome -- muted marks fail the chroma floor and read as gray (validated
+ * against #f4f4f2; the lofi-ness lives in the chrome, not the data ink).
+ */
+
+:root {
+  --ss-bg: #fafaf8;
+  --ss-panel: #f4f4f2;
+  --ss-border: #cfccc2;
+  --ss-text: #454540;
+  --ss-muted: #98948a;
+  --ss-accent: #3f78ad;
+  --ss-accent-bg: #e8edf0;
+  --ss-danger: #b95c7f;
+  --ss-warn: #a37a2c;
+  --ss-formula-bg: #efede4;
+  --ss-th-bg: #eeede9;
+
+  --ss-badge-blue: #3f78ad;
+  --ss-badge-amber: #a37a2c;
+  --ss-badge-purple: #7d6bbf;
+  --ss-badge-green: #3f8a4f;
+  --ss-badge-red: #b95c7f;
+  --ss-badge-gray: #98948a;
+
+  --ss-font-body: "Courier New", Courier, monospace;
+  --ss-font-display: "Courier New", Courier, monospace;
+  --ss-font-mono: "Courier New", Courier, monospace;
+  --ss-heading-case: lowercase;
+  --ss-heading-weight: 700;
+  --ss-heading-tracking: -0.01em;
+
+  --ss-radius: 4px;
+  --ss-radius-sm: 3px;
+  --ss-border-w: 1px;
+
+  --ss-shadow: none;
+  --ss-shadow-pop: 0 2px 8px rgba(60, 60, 55, 0.1);
+
+  --ss-pad: 16px;
+  --ss-gap: 14px;
+  --ss-motion: 0.3s;
+
+  --ss-chart-1: #3f8a4f;
+  --ss-chart-2: #7d6bbf;
+  --ss-chart-3: #a37a2c;
+  --ss-chart-4: #3f78ad;
+  --ss-chart-5: #b95c7f;
+  --ss-chart-6: #1f8fae;
+}
+
+/* Effects tokens can't express -------------------------------------------- */
+
+/* dashed hairlines everywhere -- the hand-ruled notebook look */
+.ss-panel, .ss-collapse { border-style: dashed; }
+.ss-table th, .ss-table td { border-style: dashed; }
+.ss-search, .ss-input, select.ss-input, .ss-btn { border-style: dashed; }
+.ss-segmented { border-style: dashed; }
+
+/* underline-style tabs instead of boxes */
+.ss-tabs button { border: none; border-bottom: 2px dashed transparent; border-radius: 0; background: none; }
+.ss-tabs button.active { background: none; border-bottom-color: var(--ss-accent); color: var(--ss-accent); }

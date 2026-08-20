@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Spreadsheet</title>
+<link rel="stylesheet" href="base.css">
+<script src="sheetsync.js"></script>
+<script src="components.js"></script>
+</head>
+<body>
+<!--
+  Fallback / reference composition: tabs + search + editable grid.
+  This is deliberately the *minimum* useful arrangement, not a template to
+  copy blindly -- a composed app should pick blocks that fit what the
+  spreadsheet is for (see SKILL.md). Chart.js is not loaded here; add
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script> if the
+  composition uses ChartBlock.
+-->
+
+<div class="ss-row" style="align-items:center; margin-bottom:16px;">
+  <h1 class="ss-shrink" id="title">Spreadsheet</h1>
+  <div class="ss-shrink" id="status"></div>
+</div>
+
+<div class="ss-stack">
+  <div id="tabs"></div>
+  <div id="meta"></div>
+  <div class="ss-panel ss-stack">
+    <div style="max-width:320px;" id="search"></div>
+    <div id="grid"></div>
+  </div>
+</div>
+
+<script>
+const store = new SheetStore();
+let activeSheet = null;
+let tabs = null;
+
+StatusDot(document.getElementById("status"), store);
+MetaPanel(document.getElementById("meta"), store, { sheet: () => activeSheet });
+
+const grid = DataGrid(document.getElementById("grid"), store, {
+  sheet: () => activeSheet,
+  editable: true,
+  deletable: true,
+  addable: true,
+});
+
+SearchBox(document.getElementById("search"), { onChange: f => grid.setFilter(f) });
+
+const unsubInit = store.subscribe(() => {
+  const names = store.sheetNames();
+  if (!names.length) return;
+  if (!activeSheet) {
+    activeSheet = names[0];
+    tabs = Tabs(document.getElementById("tabs"), names, {
+      onSelect: name => { activeSheet = name; grid.refresh(); },
+    });
+    if (names.length < 2) tabs.el.style.display = "none";
+    document.title = activeSheet;
+    document.getElementById("title").textContent = activeSheet;
+  }
+});
+
+store.start();
+</script>
+</body>
+</html>

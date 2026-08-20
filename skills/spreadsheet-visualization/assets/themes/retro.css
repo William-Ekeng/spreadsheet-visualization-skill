@@ -1,0 +1,126 @@
+/* THEME: retro -- load after base.css.
+ * 70s print & hardware: cream paper, mustard gold as the primary accent
+ * (not burnt orange -- see below), avocado/rust/teal/plum supporting
+ * colors, a bold geometric display face against serif body text, chunky
+ * beveled buttons instead of pills, and a halftone dot texture (the actual
+ * period print technique, not a decorative afterthought).
+ *
+ * Rebuilt after a "this looks like a cozy/lofi variant" review. The
+ * previous version wasn't wrong on color family (cream + earth tones is
+ * correct) but shared its *identity* moves with the other soft themes
+ * rather than having its own: --ss-accent (#c2410c, burnt orange) sat in
+ * the same hue family as cozy's accent (#b45309) -- close enough to read
+ * as the same idea in different lighting; buttons used the identical
+ * 999px pill radius as cozy; and both body *and* display fonts were
+ * Georgia, the same face cozy uses for its display. None of that is a
+ * contrast/accessibility problem, it's a *distinctiveness* problem --
+ * researched background on what actually reads as "retro" specifically
+ * (not vintage, not midcentury) rather than "warm and rounded" in
+ * general: thick/bold sans-serif display type with high contrast, not
+ * elegant serif italics (that's closer to a vintage-almanac look); a
+ * palette anchored in avocado green and mustard yellow as the *primary*
+ * identity colors, with burnt orange as a supporting tone rather than the
+ * headline color; halftone/Ben-Day dots as the era's actual print
+ * texture; and bevelled/raised borders (light top-left, dark bottom-right)
+ * as a distinct tactile-hardware device — sources in references/theming.md.
+ * Chart palette validated (dataviz six checks) against the cream panel
+ * #f7edd8; surface/text/border pairs re-checked with the same WCAG
+ * relative-luminance formula used for the cyberpunk pass (muted and
+ * border were both quietly under typical AA-ish targets in the original
+ * version -- #85714f measured 4.04:1 as text, #c8b48e measured 1.74:1 as
+ * a border -- so this pass darkened both, not just the identity colors).
+ */
+
+:root {
+  --ss-bg: #ece0c3;
+  --ss-panel: #f7edd8;
+  --ss-border: #96754a;
+  --ss-text: #3b2c18;
+  --ss-muted: #6e5b3a;
+  --ss-accent: #7a5f00;
+  --ss-accent-bg: #e3d6b5;
+  --ss-danger: #a3244c;
+  --ss-warn: #9c5a1e;
+  --ss-formula-bg: #efe0b8;
+  --ss-th-bg: #eadfc2;
+
+  --ss-badge-blue: #0a6e64;
+  --ss-badge-amber: #9c5a1e;
+  --ss-badge-purple: #6d3d91;
+  --ss-badge-green: #4d7c0f;
+  --ss-badge-red: #a3244c;
+  --ss-badge-gray: #6e5b3a;
+
+  /* Serif body + bold geometric-sans display is the deliberate structural
+     swap from cozy (which pairs a sans body with a serif display) -- same
+     two type families in the theme, opposite roles, so the two themes
+     can't visually collapse into each other even at a glance. */
+  --ss-font-body: Georgia, "Times New Roman", serif;
+  --ss-font-display: "Century Gothic", Futura, "Trebuchet MS", sans-serif;
+  --ss-font-mono: "Courier New", monospace;
+  --ss-heading-case: none;
+  --ss-heading-weight: 700;
+  --ss-heading-tracking: 0;
+
+  --ss-radius: 8px;
+  --ss-radius-sm: 5px;
+  --ss-border-w: 1px;
+
+  --ss-shadow: 0 2px 0 rgba(107, 84, 45, 0.14);
+  --ss-shadow-pop: 0 4px 10px rgba(107, 84, 45, 0.22);
+
+  --ss-pad: 18px;
+  --ss-gap: 18px;
+  --ss-motion: 0.2s;
+
+  --ss-chart-1: #9a3412;
+  --ss-chart-2: #0d9488;
+  --ss-chart-3: #7a5f00;
+  --ss-chart-4: #6d3d91;
+  --ss-chart-5: #4d7c0f;
+  --ss-chart-6: #a3244c;
+}
+
+/* Effects tokens can't express -------------------------------------------- */
+
+/* double rule under table headers -- the actual "double-rule masthead"
+   convention from period print tables, kept from the previous version
+   since it was already correctly retro-coded, not a cozy/lofi overlap. */
+.ss-table th { border-bottom: 3px double var(--ss-border); font-weight: 700; }
+.ss-facts th { letter-spacing: 0.08em; }
+
+/* Halftone / Ben-Day dots -- the era's actual print-reproduction texture,
+   not a generic decorative pattern. Distinct in kind (dots vs. cyberpunk's
+   scanline hairlines) as well as period. */
+.ss-panel, .ss-collapse {
+  background-image: radial-gradient(circle, rgba(59, 44, 24, 0.05) 1px, transparent 1px);
+  background-size: 8px 8px;
+}
+
+/* Chunky beveled buttons, not pills -- a raised-hardware edge (light
+   top/left, dark bottom/right) reads as a distinct tactile object in a way
+   a flat pill (cozy's shape) or a flat rectangle (lofi's) doesn't. Pressing
+   flips the bevel to read as pushed in, then the hard shadow settles it
+   back -- an authentic period UI behavior, not just a hover tint. */
+.ss-btn {
+  border-radius: 10px; padding-left: 20px; padding-right: 20px;
+  border-width: 2px;
+  border-top-color: color-mix(in srgb, var(--ss-panel) 60%, white);
+  border-left-color: color-mix(in srgb, var(--ss-panel) 60%, white);
+  border-right-color: color-mix(in srgb, var(--ss-text) 45%, var(--ss-border));
+  border-bottom-color: color-mix(in srgb, var(--ss-text) 45%, var(--ss-border));
+}
+.ss-btn:active {
+  border-top-color: color-mix(in srgb, var(--ss-text) 45%, var(--ss-border));
+  border-left-color: color-mix(in srgb, var(--ss-text) 45%, var(--ss-border));
+  border-right-color: color-mix(in srgb, var(--ss-panel) 60%, white);
+  border-bottom-color: color-mix(in srgb, var(--ss-panel) 60%, white);
+}
+.ss-btn-icon { padding-left: 0; padding-right: 0; }
+/* Primary keeps retro's own mustard fill rather than the shared inverted
+   look -- an intentional per-theme choice, not a tokens-can't-express case. */
+.ss-btn-primary { background: var(--ss-accent); color: var(--ss-panel); border-color: var(--ss-accent); }
+
+/* tile numbers get the big almanac treatment -- now in the bold geometric
+   display face rather than serif, automatically, via --ss-font-display. */
+.ss-tile-value { font-size: 28px; }

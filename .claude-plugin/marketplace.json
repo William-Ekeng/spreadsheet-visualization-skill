@@ -1,0 +1,22 @@
+{
+  "name": "williamekeng",
+  "owner": {
+    "name": "William Ekeng"
+  },
+  "description": "William Ekeng's Claude Code skills, installable as a plugin.",
+  "plugins": [
+    {
+      "name": "spreadsheet-visualization",
+      "source": "./",
+      "description": "Turn a spreadsheet into a live, editable HTML app with two-way sync between the browser and the file.",
+      "category": "productivity",
+      "keywords": [
+        "spreadsheet",
+        "excel",
+        "csv",
+        "dashboard",
+        "visualization"
+      ]
+    }
+  ]
+}

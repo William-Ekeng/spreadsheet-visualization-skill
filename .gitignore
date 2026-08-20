@@ -1,0 +1,11 @@
+# Runtime artifacts
+*.log
+__pycache__/
+*.pyc
+
+# Packaged skill bundles
+*.skill
+
+# OS noise
+.DS_Store
+Thumbs.db

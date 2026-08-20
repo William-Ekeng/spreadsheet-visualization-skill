@@ -1,0 +1,65 @@
+/* THEME: cozy -- load after base.css.
+ * Warm cafe: latte creams, terracotta, big soft radii, gentle shadows,
+ * generous padding, humanist serif display. Chart palette validated
+ * (dataviz six checks) against the panel #fdf6ec.
+ */
+
+:root {
+  --ss-bg: #f3e7d3;
+  --ss-panel: #fdf6ec;
+  --ss-border: #e4d3b8;
+  --ss-text: #46342a;
+  --ss-muted: #9b7f68;
+  --ss-accent: #b45309;
+  --ss-accent-bg: #f7e4ca;
+  --ss-danger: #9a3412;
+  --ss-warn: #8a5a00;
+  --ss-formula-bg: #f5e8cd;
+  --ss-th-bg: #f6ecdb;
+
+  --ss-badge-blue: #4a6fb3;
+  --ss-badge-amber: #8a5a00;
+  --ss-badge-purple: #86198f;
+  --ss-badge-green: #4d7c0f;
+  --ss-badge-red: #9a3412;
+  --ss-badge-gray: #9b7f68;
+
+  --ss-font-body: "Segoe UI", -apple-system, sans-serif;
+  --ss-font-display: Georgia, "Palatino Linotype", serif;
+  --ss-font-mono: ui-monospace, Consolas, monospace;
+  --ss-heading-case: none;
+  --ss-heading-weight: 700;
+  --ss-heading-tracking: 0;
+
+  --ss-radius: 18px;
+  --ss-radius-sm: 10px;
+  --ss-border-w: 1px;
+
+  --ss-shadow: 0 6px 18px rgba(122, 84, 40, 0.08);
+  --ss-shadow-pop: 0 10px 28px rgba(122, 84, 40, 0.14);
+
+  --ss-pad: 20px;
+  --ss-gap: 20px;
+  --ss-motion: 0.25s;
+
+  --ss-chart-1: #9a3412;
+  --ss-chart-2: #0d9488;
+  --ss-chart-3: #b45309;
+  --ss-chart-4: #86198f;
+  --ss-chart-5: #4d7c0f;
+  --ss-chart-6: #4a6fb3;
+}
+
+/* Effects tokens can't express -------------------------------------------- */
+
+/* extra-round pills and inputs; buttons feel like soft buttons.
+   (height is fixed in base.css -- only shape/horizontal padding here.) */
+.ss-btn { border-radius: 999px; padding-left: 20px; padding-right: 20px; }
+.ss-btn-icon { padding-left: 0; padding-right: 0; }
+.ss-search, .ss-input, select.ss-input { border-radius: 12px; }
+
+/* headers blend into the panel rather than banding */
+.ss-table th { border-top: none; font-weight: 600; }
+
+/* collapsible number chips go round */
+.ss-collapse-num { border-radius: 50%; }

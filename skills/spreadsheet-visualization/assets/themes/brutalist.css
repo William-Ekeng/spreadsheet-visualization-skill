@@ -1,0 +1,106 @@
+/* THEME: brutalist -- load after base.css.
+ * Raw and loud: pure black on white, zero radius, thick borders, hard offset
+ * shadows, uppercase display type, no motion. Chart palette validated
+ * (dataviz six checks) against #ffffff.
+ */
+
+:root {
+  --ss-bg: #f2f2f2;
+  --ss-panel: #ffffff;
+  --ss-border: #000000;
+  --ss-text: #000000;
+  --ss-muted: #3d3d3d;
+  --ss-accent: #000000;
+  --ss-accent-bg: #ffe600;      /* highlighter yellow for active states */
+  --ss-danger: #d90429;
+  --ss-warn: #b45309;
+  --ss-formula-bg: #efefef;
+  --ss-th-bg: #000000;
+
+  --ss-badge-blue: #1d4ed8;
+  --ss-badge-amber: #8a5a00;
+  --ss-badge-purple: #6d28d9;
+  --ss-badge-green: #15803d;
+  --ss-badge-red: #d90429;
+  --ss-badge-gray: #3d3d3d;
+
+  --ss-font-body: Arial, Helvetica, sans-serif;
+  --ss-font-display: "Arial Black", "Arial Bold", Arial, sans-serif;
+  --ss-font-mono: "Courier New", monospace;
+  --ss-heading-case: uppercase;
+  --ss-heading-weight: 900;
+  --ss-heading-tracking: 0.01em;
+
+  --ss-radius: 0px;
+  --ss-radius-sm: 0px;
+  --ss-border-w: 2px;
+
+  --ss-shadow: 4px 4px 0 #000000;
+  --ss-shadow-pop: 6px 6px 0 #000000;
+
+  --ss-pad: 16px;
+  --ss-gap: 20px;
+  --ss-motion: 0s;
+
+  --ss-chart-1: #d90429;
+  --ss-chart-2: #1d4ed8;
+  --ss-chart-3: #d97706;
+  --ss-chart-4: #15803d;
+  --ss-chart-5: #7c3aed;
+  --ss-chart-6: #0891b2;
+}
+
+/* Effects tokens can't express -------------------------------------------- */
+
+/* header row inverts: white on black */
+.ss-table th { color: #ffffff; }
+.ss-table th.sort-asc::after, .ss-table th.sort-desc::after { color: var(--ss-accent-bg); }
+
+/* base.css keeps only horizontal row dividers (shadcn-style connected
+   table); brutalism's whole vocabulary is bold grid lines, so restore the
+   full cell-boxed look here deliberately rather than inherit the quieter
+   default. */
+.ss-table th, .ss-table td { border: var(--ss-border-w) solid var(--ss-border); }
+
+/* buttons and badges get the hard-shadow treatment */
+.ss-btn { box-shadow: 2px 2px 0 #000000; font-weight: 700; text-transform: uppercase; font-size: 12px; }
+.ss-btn:active { box-shadow: none; transform: translate(2px, 2px); }
+.ss-badge { border-color: currentColor; border-radius: 0; font-weight: 700; text-transform: uppercase; }
+
+/* Black-filled elements (primary button, checked checkbox) need a shadow
+   that ISN'T also black -- a black hard-offset shadow behind a black fill
+   has no edge between "the element" and "its own shadow," so the two read
+   as one undifferentiated blob instead of a crisp raised block. Swap to a
+   concrete gray for exactly the elements that are black-filled -- reads
+   as raw poured concrete, which fits brutalism harder than the yellow
+   highlighter does here (that stays reserved for actual active/selected
+   state elsewhere: badge-accent, header sort arrows, focus rings).
+   Everything else (outline/secondary/ghost buttons, unchecked checkbox)
+   keeps the plain black shadow, which reads fine against a light fill. */
+.ss-btn-primary { box-shadow: 2px 2px 0 #9c9c9c; }
+input[type="checkbox"].ss-input:checked { box-shadow: 2px 2px 0 #9c9c9c; }
+
+/* The switch thumb is always a circle (base.css), but --ss-shadow here is
+   a hard-edged, unblurred, square-cornered offset -- a square shadow
+   behind a round knob reads as a geometry mismatch regardless of color,
+   the kind of "off" a hard-offset shadow should never produce. Small round
+   controls don't need the raised-card treatment the shadow token is for;
+   the track's own border + fill already give the switch enough definition. */
+.ss-switch-thumb { box-shadow: none; }
+
+/* pager buttons square + bold */
+.ss-pager button { font-weight: 900; }
+
+/* --ss-accent, --ss-border, and --ss-text are all pure #000000 here (the
+   whole point of brutalism) -- but base.css's generic focus ring derives
+   its color from --ss-accent, and the switch's checked-track color from
+   --ss-text. Both collapse to black-on-black against this theme's already-
+   black 2px borders, so a focused input or a toggled switch shows almost
+   no visible state change. Use the highlighter yellow already established
+   here for "active" (badge-accent, header sort arrows) instead. */
+.ss-search:focus, .ss-input:focus, select.ss-input:focus {
+  border-color: #000000; box-shadow: 0 0 0 3px var(--ss-accent-bg);
+}
+.ss-switch:focus-visible { box-shadow: 0 0 0 3px var(--ss-accent-bg); }
+.ss-switch[aria-checked="true"] { background: var(--ss-accent-bg); }
+.ss-switch[aria-checked="true"] .ss-switch-thumb { background: #000000; }
