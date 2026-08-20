@@ -48,35 +48,35 @@ save time. Two consequences:
 2. **`--recalc` flag.** `sync_server.py --recalc` fills in formula cells
    that have no cached value using the optional
    [`formulas`](https://pypi.org/project/formulas/) package
-   (`uv run --with formulas` or `pip install formulas`). Mainly useful for a workbook that's never been
-   opened in real Excel (e.g. built with openpyxl), where every formula cell
-   would otherwise show blank. This is deliberately display-only and
-   read-only: the computed values are merged into the JSON the frontend
-   sees and are never written back to the spreadsheet file. That was a
-   conscious redesign after testing the alternative (asking `formulas` to
-   rewrite the xlsx directly) and finding it rebuilds the *entire* workbook
-   from only the cells touched during evaluation. On a real file that
-   silently drops data/formatting outside the formula dependency graph, and
-   since openpyxl can't store a formula and a cached value in the same cell
-   the way Excel does, it also permanently replaces the formula with a
-   plain number. None of that is worth the risk for a "recalculate" flag,
-   so the file on disk is simply never touched by `--recalc`. Verify this
-   still holds if `_formula_solution_for`/`_formula_solution_lookup` are
-   modified. It supports a useful subset of Excel functions (arithmetic,
+   (`uv run --with formulas` or `pip install formulas`). Mainly useful
+   for a workbook that's never been opened in real Excel, one built with
+   openpyxl say, where every formula cell would otherwise show blank.
+   This is deliberately display-only and read-only: the computed values
+   are merged into the JSON the frontend sees and are never written back
+   to the spreadsheet file. The alternative, asking `formulas` to rewrite
+   the xlsx directly, rebuilds the *entire* workbook from only the cells
+   touched during evaluation. On a real file that silently drops data and
+   formatting outside the formula dependency graph, and since openpyxl
+   can't store a formula and a cached value in the same cell the way
+   Excel does, it also permanently replaces the formula with a plain
+   number. That is not a risk worth taking for a recalculate flag, so
+   `--recalc` never touches the file on disk. Verify this still holds if
+   `_formula_solution_for`/`_formula_solution_lookup` are modified.
+   `formulas` supports a useful subset of Excel functions (arithmetic,
    lookups, common aggregations) but not everything: complex array
    formulas, volatile functions (`NOW()`, `RAND()`), and some newer Excel
    functions will fail silently per-cell and leave that cell blank rather
    than error the whole request.
 3. **Precompute derived columns instead of formulas.** For apps that
    mainly need calculated fields (e.g. profit margin = (revenue - cost) /
-   revenue), it's often simpler and more robust to compute them in
-   JavaScript in the composed page from the raw columns (a `format`
+   revenue), computing them in JavaScript in the composed page from the
+   raw columns is simpler and harder to break (a `format`
    function on DataGrid, a `compute` on StatTile, or a derived column
-   built before rendering), rather than fighting with formula
-   recalculation at all. Prefer this when the "formula" is simple
-   arithmetic over columns already in the sheet.
+   built before rendering) than fighting with formula recalculation at
+   all. Prefer this when the "formula" is simple arithmetic over
+   columns already in the sheet.
 
-## Other things worth knowing before adapting the template
+## Before adapting the template
 
 - **Header row detection.** `sync_server.py` auto-detects the header row per
   xlsx sheet (`_detect_header_row`) as the first "wide" row, meaning one

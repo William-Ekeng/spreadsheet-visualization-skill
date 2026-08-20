@@ -49,16 +49,14 @@ Legacy .xls files: openpyxl can't read or write the old binary Excel format
 at all, and there's no actively-maintained pure-Python writer for it either.
 Rather than fail outright or silently bolt on a fragile legacy writer, this
 script converts a .xls to a sibling .xlsx once on startup (via xlrd) and
-operates on that going forward -- the original .xls is left untouched. This
-is a one-time, visible step (printed to the console), not something to do
-quietly, since it changes which file is now the live source of truth.
+operates on that from then on. The original .xls is left untouched. The
+conversion prints to the console rather than happening quietly, because it
+changes which file is now the live source of truth.
 """
 
 import argparse
 import csv
-import os
 import re
-import threading
 import time
 from pathlib import Path
 
@@ -132,9 +130,9 @@ def _detect_header_row(rows_iter, max_col, scan_limit=30):
     prepend a handful of key/value metadata rows ("Company", "Download
     Date", ...) before the actual table header. A plain "row 1 is the
     header" assumption misreads those as data. Heuristic: the header row is
-    the first row, within the first `scan_limit` rows, that is "wide" --
-    populated across most of the sheet's columns -- since metadata rows are
-    narrow (typically a label + one value) by comparison.
+    the first row, within the first `scan_limit` rows, that is "wide",
+    meaning populated across most of the sheet's columns. Metadata rows are
+    narrow by comparison, typically a label plus one value.
     """
     threshold = max(3, max_col * 0.5)
     for i, row in enumerate(rows_iter[:scan_limit], start=1):
@@ -146,9 +144,9 @@ def _detect_header_row(rows_iter, max_col, scan_limit=30):
 
 def _extract_meta(rows_before_header):
     """Turn narrow "label, value" rows preceding the header into a flat
-    dict, so that context (company name, report date, etc.) isn't silently
-    dropped -- it's useful to surface in the dashboard even though it isn't
-    part of the tabular data.
+    dict, so context like a company name or report date isn't silently
+    dropped. It's worth surfacing in the dashboard even though it isn't part
+    of the tabular data.
     """
     meta = {}
     for row in rows_before_header:
@@ -161,14 +159,15 @@ def _extract_meta(rows_before_header):
 def read_workbook(path, recalc=False):
     """Return {sheet_name: {"headers": [...], "rows": [ {col: value}, ... ],
     "formulas": {(row_idx, col): "=..."}, "meta": {...}, "header_row": N }}.
-    The header row is auto-detected per sheet rather than assumed to be row 1
-    -- see _detect_header_row.
+    The header row is auto-detected per sheet rather than assumed to be
+    row 1. See _detect_header_row.
 
-    If `recalc` is True, formula cells that have no cached value yet (most
-    commonly: a workbook built with openpyxl rather than ever saved by real
-    Excel, so Excel never wrote a cached result) are filled in using the
-    `formulas` package as a *display-only* enrichment of the JSON response --
-    see _formula_solution_for for why this never touches the file on disk.
+    If `recalc` is True, formula cells that have no cached value yet are
+    filled in using the `formulas` package, as a display-only enrichment of
+    the JSON response. See _formula_solution_for for why this never touches
+    the file on disk. A cell most often lacks a cached value when the
+    workbook was built with openpyxl and never saved by real Excel, so Excel
+    never wrote a result.
     """
     path = Path(path)
     if _is_xlsx(path):
@@ -299,20 +298,20 @@ def _formula_solution_for(path):
     """Evaluate every formula in the workbook using the optional `formulas`
     package and return its raw solution dict (cell-ref -> computed value),
     or None if the package isn't installed or evaluation fails outright
-    (unsupported functions, circular refs, etc. -- individual unsupported
-    cells are handled per-lookup in _formula_solution_lookup instead).
+    (unsupported functions, circular refs, and so on). Individual
+    unsupported cells are handled per-lookup in _formula_solution_lookup
+    instead.
 
-    Deliberately read-only: earlier this recalculated by asking `formulas`
-    to *rewrite the xlsx* (`ExcelModel.write`), which turned out to rebuild
-    the entire workbook from only the cells it touched during evaluation --
-    on a real file that silently dropped data/formatting outside the
+    Deliberately read-only. An earlier version recalculated by asking
+    `formulas` to rewrite the xlsx via `ExcelModel.write`, which rebuilds
+    the entire workbook from only the cells it touched during evaluation.
+    On a real file that silently dropped data and formatting outside the
     formula dependency graph, and permanently replaced formula cells with
-    plain numbers (openpyxl has no way to write a cached value alongside a
-    formula the way Excel does, so there's no non-destructive way to persist
-    this to the file at all). Using it purely to enrich the JSON response
-    the browser sees -- without ever touching the file on disk -- avoids
-    that risk entirely, at the cost of the recalculated value not being
-    visible if the user opens the raw file directly in Excel.
+    plain numbers. openpyxl can't write a cached value alongside a formula
+    the way Excel does, so there is no non-destructive way to persist this
+    to the file at all. Enriching only the JSON the browser sees avoids the
+    risk, at the cost of the recalculated value being invisible if the user
+    opens the raw file in Excel.
     """
     try:
         import numpy as np
@@ -321,7 +320,7 @@ def _formula_solution_for(path):
         xl = formulas.ExcelModel().loads(str(path)).finish()
         raw = xl.calculate()
         # Index once by (SHEET, CELLREF) rather than re-scanning the whole
-        # solution per formula cell -- a real workbook can have thousands.
+        # solution per formula cell. A real workbook can have thousands.
         indexed = {}
         for key, ranges in raw.items():
             m = _FORMULA_SOLUTION_KEY_RE.match(key)
@@ -444,8 +443,8 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--file", required=True, help="Path to the .xlsx/.xlsm/.csv/.xls spreadsheet")
     parser.add_argument("--port", type=int, default=5000)
-    parser.add_argument("--ui", help="Path to the composed HTML UI to serve at / -- its directory is also served as static files, so keep sheetsync.js/components.js/base.css next to it")
-    parser.add_argument("--recalc", action="store_true", help="Fill in formula cells that have no cached value yet using the `formulas` package, for display only -- never written to the file (pip install formulas)")
+    parser.add_argument("--ui", help="Path to the composed HTML UI to serve at /. Its directory is also served as static files, so keep sheetsync.js/components.js/base.css next to it")
+    parser.add_argument("--recalc", action="store_true", help="Fill in formula cells that have no cached value yet using the `formulas` package. Display only, never written to the file (pip install formulas)")
     args = parser.parse_args()
 
     path = Path(args.file).resolve()
@@ -463,7 +462,7 @@ def main():
     STATE["ui_file"] = ui_path.name
 
     if _is_legacy_xls(path):
-        print(f"{path.name} is a legacy .xls file -- openpyxl can't read or write that format.")
+        print(f"{path.name} is a legacy .xls file. openpyxl can't read or write that format.")
         new_path = convert_xls_to_xlsx(path)
         print(f"Converted to {new_path.name} (original left untouched). Serving the .xlsx from now on.")
         path = new_path
@@ -474,7 +473,7 @@ def main():
 
     observer = start_watcher(path)
     print(f"Serving {path.name} live at http://127.0.0.1:{args.port}")
-    print("Edit the file in Excel or in the browser -- both sides stay in sync.")
+    print("Edit the file in Excel or in the browser. Both sides stay in sync.")
     try:
         app.run(host="127.0.0.1", port=args.port, threaded=True)
     finally:

@@ -11,8 +11,8 @@
 <!--
   Fallback / reference composition: tabs + search + editable grid.
   This is deliberately the *minimum* useful arrangement, not a template to
-  copy blindly -- a composed app should pick blocks that fit what the
-  spreadsheet is for (see SKILL.md). Chart.js is not loaded here; add
+  copy blindly. A composed app should pick blocks that fit what the
+  spreadsheet is for (see SKILL.md). Chart.js is not loaded here, so add
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script> if the
   composition uses ChartBlock.
 -->
@@ -37,7 +37,7 @@ let activeSheet = null;
 let tabs = null;
 
 StatusDot(document.getElementById("status"), store);
-MetaPanel(document.getElementById("meta"), store, { sheet: () => activeSheet });
+const meta = MetaPanel(document.getElementById("meta"), store, { sheet: () => activeSheet });
 
 const grid = DataGrid(document.getElementById("grid"), store, {
   sheet: () => activeSheet,
@@ -48,18 +48,21 @@ const grid = DataGrid(document.getElementById("grid"), store, {
 
 SearchBox(document.getElementById("search"), { onChange: f => grid.setFilter(f) });
 
-const unsubInit = store.subscribe(() => {
+// Which sheet is active isn't known until the first payload arrives, and
+// the blocks above subscribed first, so their initial render already ran
+// against activeSheet === null. Refresh them once the name is set.
+store.subscribe(() => {
   const names = store.sheetNames();
-  if (!names.length) return;
-  if (!activeSheet) {
-    activeSheet = names[0];
-    tabs = Tabs(document.getElementById("tabs"), names, {
-      onSelect: name => { activeSheet = name; grid.refresh(); },
-    });
-    if (names.length < 2) tabs.el.style.display = "none";
-    document.title = activeSheet;
-    document.getElementById("title").textContent = activeSheet;
-  }
+  if (!names.length || activeSheet) return;
+  activeSheet = names[0];
+  tabs = Tabs(document.getElementById("tabs"), names, {
+    onSelect: name => { activeSheet = name; meta.refresh(); grid.refresh(); },
+  });
+  if (names.length < 2) tabs.el.style.display = "none";
+  document.title = activeSheet;
+  document.getElementById("title").textContent = activeSheet;
+  meta.refresh();
+  grid.refresh();
 });
 
 store.start();

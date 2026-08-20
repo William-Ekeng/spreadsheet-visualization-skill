@@ -1,8 +1,8 @@
-/* THEME: lofi -- load after base.css.
+/* THEME: lofi. Load after base.css.
  * Quiet, sketchy, typewriter: monospace body, dashed hairlines, muted UI
- * chrome. Note the chart palette is deliberately MORE saturated than the
- * chrome -- muted marks fail the chroma floor and read as gray (validated
- * against #f4f4f2; the lofi-ness lives in the chrome, not the data ink).
+ * chrome. The chart palette is deliberately more saturated than the chrome,
+ * because muted marks fail the chroma floor and read as gray (validated
+ * against #f4f4f2). The lofi-ness lives in the chrome, not the data ink.
  */
 
 :root {
@@ -53,7 +53,7 @@
 
 /* Effects tokens can't express -------------------------------------------- */
 
-/* dashed hairlines everywhere -- the hand-ruled notebook look */
+/* dashed hairlines everywhere, for the hand-ruled notebook look */
 .ss-panel, .ss-collapse { border-style: dashed; }
 .ss-table th, .ss-table td { border-style: dashed; }
 .ss-search, .ss-input, select.ss-input, .ss-btn { border-style: dashed; }

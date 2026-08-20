@@ -1,5 +1,5 @@
 /*
- * sheetsync.js -- data layer for spreadsheet-backed UIs. No UI opinions.
+ * sheetsync.js: data layer for spreadsheet-backed UIs. No UI opinions.
  *
  * Wraps the sync_server.py JSON API in a small observable store:
  *
@@ -10,9 +10,9 @@
  *   await store.saveCell("Orders", 12, "Quantity", 5);
  *
  * The store polls a cheap /api/version endpoint and only fetches the full
- * payload when the version moved (either from this page's own writes or
- * from someone editing the file directly in Excel), so subscribers are only
- * called when data genuinely changed.
+ * payload when the version moved, either from this page's own writes or
+ * from someone editing the file directly in Excel. Subscribers therefore
+ * only fire when the data actually changed.
  */
 
 class SheetStore {
@@ -84,7 +84,7 @@ class SheetStore {
       const { version } = await res.json();
       this._setStatus(true);
       if (version !== this.version) await this.refresh();
-    } catch (e) {
+    } catch {
       this._setStatus(false);
     } finally {
       if (this._running) setTimeout(() => this._tick(), this.pollMs);
@@ -117,9 +117,10 @@ class SheetStore {
   }
 }
 
-/* Column type inference -- lets form/input components pick sensible editors
- * without the composing page having to declare every column's type by hand.
- * Returns one of: "number" | "date" | "checkbox" | "select" | "text".
+/* Column type inference, so form and input components can pick sensible
+ * editors without the composing page declaring every column's type by hand.
+ * Returns one of: "number" | "date" | "checkbox" | "select" | "textarea" |
+ * "text".
  */
 function inferFieldType(sheetData, column, sampleSize = 40) {
   const values = sheetData.rows.slice(0, sampleSize)

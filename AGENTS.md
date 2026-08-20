@@ -70,7 +70,9 @@ does not exist.
 - Never commit runtime artifacts: `*.log`, `__pycache__/`, packaged `*.skill`
   bundles. They are gitignored; keep it that way.
 - Line endings are LF, enforced by `.gitattributes`.
-- Do not use em-dashes anywhere in the repo. Use periods or commas instead.
+- Do not use em-dashes anywhere in the repo, in prose or in code comments.
+  Use periods or commas instead. That includes the substitutes: no ` -- `,
+  no en-dashes, no parentheses standing in for the same pause.
 - Version bumps happen in `.claude-plugin/plugin.json` (semver). Bump the
   patch version for fixes, minor for new capability, major for breaking
   changes to the assets' public API.

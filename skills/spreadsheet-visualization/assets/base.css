@@ -1,14 +1,14 @@
 /*
- * base.css -- structure + token contract for composed spreadsheet UIs.
+ * base.css: structure and token contract for composed spreadsheet UIs.
  *
- * ARCHITECTURE: components only ever reference --ss-* tokens; this file
- * defines the neutral default theme (light, plus a built-in dark via
- * <html data-theme="dark">). A THEME is a stylesheet loaded AFTER this one
- * that redefines the token contract -- and, where tokens can't express an
- * effect (hard offset shadows, glows), adds its own scoped overrides of the
- * ss-* classes. See themes/*.css and references/theming.md.
+ * Components only ever reference --ss-* tokens. This file defines the
+ * neutral default theme (light, plus a built-in dark via
+ * <html data-theme="dark">). A theme is a stylesheet loaded after this one
+ * that redefines the token contract and, where tokens can't express an
+ * effect such as a hard offset shadow or a glow, adds its own scoped
+ * overrides of the ss-* classes. See themes/*.css and references/theming.md.
  *
- * The contract spans six dimensions plus charts -- a theme that only swaps
+ * The contract spans six dimensions plus charts. A theme that only swaps
  * colors is a palette, not a theme:
  *   color        --ss-bg/panel/border/text/muted/accent/... + badge colors
  *   typography   --ss-font-body/display/mono, size, heading case/weight/tracking
@@ -20,11 +20,10 @@
  */
 
 :root {
-  /* color -- neutrals are true 0-chroma grayscale (matches shadcn/ui's
+  /* color. Neutrals are true 0-chroma grayscale, matching shadcn/ui's
      default token values: bg oklch(1 0 0), border oklch(0.922 0 0), text
-     oklch(0.145 0 0), muted oklch(0.556 0 0), converted to hex). Earlier
-     hex picked by eye carried a faint blue-gray cast that reads muddier
-     than a true neutral -- this is the fix, not a new color direction. */
+     oklch(0.145 0 0), muted oklch(0.556 0 0), converted to hex. Hex picked
+     by eye carries a faint blue-gray cast that reads muddier. */
   --ss-bg: #fafafa;
   --ss-panel: #ffffff;
   --ss-border: #e5e5e5;
@@ -54,15 +53,14 @@
   --ss-heading-weight: 700;
   --ss-heading-tracking: 0;
 
-  /* shape -- 10px/6px already matched shadcn/ui's --radius (0.625rem) and
-     --radius-sm (~0.375rem) scale exactly; unchanged. */
+  /* shape. 10px/6px matches shadcn/ui's --radius (0.625rem) and
+     --radius-sm (~0.375rem) scale exactly. */
   --ss-radius: 10px;
   --ss-radius-sm: 6px;
   --ss-border-w: 1px;
 
-  /* depth -- shadcn/ui's default Card carries a hairline shadow (their
-     shadow-sm), not none; panels reading as flush-flat against the page
-     was the one thing "none" got wrong. */
+  /* depth. A hairline shadow, matching shadcn/ui's shadow-sm on Card.
+     With no shadow at all, panels read as flush-flat against the page. */
   --ss-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
   --ss-shadow-pop: 0 4px 16px rgba(0, 0, 0, 0.08);
 
@@ -73,7 +71,7 @@
   /* motion */
   --ss-motion: 0.15s;
 
-  /* charts -- categorical slots in fixed order (validated palette) */
+  /* charts: categorical slots in fixed order (validated palette) */
   --ss-chart-1: #2a78d6;
   --ss-chart-2: #eb6834;
   --ss-chart-3: #1baf7a;
@@ -82,14 +80,12 @@
   --ss-chart-6: #008300;
 }
 
-/* Built-in dark: same contract, dark values. Softened off shadcn/ui's raw
-   oklch(0.145 0 0)/oklch(0.985 0 0) bg/text pair (which is what #0a0a0a/
-   #fafafa were) toward Material Design's dark-surface convention instead
-   (#121212 bg / ~87%-white text) -- true-black-plus-true-white is known to
-   read as harsher/higher-glare than necessary once actually rendered at
-   scale, particularly on OLED. Shadows are untouched by this -- only the
-   surface/text tokens moved. Themes define their own -- this is only the
-   built-in default's dark mode. */
+/* Built-in dark: same contract, dark values. The bg/text pair follows
+   Material Design's dark-surface convention (#121212 bg, ~87%-white text)
+   rather than shadcn/ui's raw oklch(0.145 0 0)/oklch(0.985 0 0), which is
+   true black on true white and reads as higher-glare at scale, especially
+   on OLED. Only the surface and text tokens differ from light; shadows are
+   shared. Themes define their own dark values. */
 [data-theme="dark"] {
   --ss-bg: #121212;
   --ss-panel: #1e1e1e;
@@ -121,15 +117,12 @@
 * { box-sizing: border-box; }
 
 /* ---- Scrollbars: minimal, theme-aware, everywhere ----
- * Applied with a universal selector rather than scoped to specific
- * classes (like .ss-grid-scroll) so it covers every overflow container
- * automatically -- the page itself, DataGrid's inner scroll, and any
- * future scrollable block a composition adds -- without each one needing
- * to opt in individually. Color comes from theme tokens (so it's
- * genuinely theme-aware, not a fixed gray OS scrollbar bolted on top),
- * and the thumb's corner radius follows --ss-radius-sm so it's a sharp
- * rectangle in brutalist and a soft pill everywhere else, matching each
- * theme's own shape language rather than defaulting to always-rounded.
+ * A universal selector rather than a scoped one (like .ss-grid-scroll)
+ * covers every overflow container automatically: the page itself,
+ * DataGrid's inner scroll, and any scrollable block a composition adds
+ * later, with nothing to opt into. Color comes from theme tokens, and the
+ * thumb's corner radius follows --ss-radius-sm, so the thumb is a sharp
+ * rectangle in brutalist and a soft pill everywhere else.
  */
 * {
   scrollbar-width: thin;
@@ -183,8 +176,9 @@ code, .ss-code { font-family: var(--ss-font-mono); font-size: 13px; }
 .ss-muted { color: var(--ss-muted); font-size: 13px; }
 
 /* ---- Tabs (default: underline) ----
- * No container chrome, no per-tab box -- tab identity is navigation state,
- * not a status/badge, so it earns weight and an underline, not a fill.
+ * No container chrome, no per-tab box. Tab identity is navigation state
+ * rather than a status badge, so it gets weight and an underline, not a
+ * fill.
  */
 
 .ss-tabs { display: flex; gap: 28px; flex-wrap: wrap; }
@@ -198,9 +192,8 @@ code, .ss-code { font-family: var(--ss-font-mono); font-size: 13px; }
 .ss-tabs button.active { color: var(--ss-text); border-bottom-color: currentColor; }
 
 /* ---- MetaPanel ----
- * shadcn's own typography scale has no uppercase/letter-spaced "eyebrow"
- * convention -- Label is plain text-sm font-medium. Match that instead of
- * the louder small-caps treatment this used to have.
+ * Label is plain text-sm font-medium, matching shadcn's Label. Its
+ * typography scale has no uppercase letter-spaced "eyebrow" convention.
  */
 
 .ss-meta { display: flex; gap: 24px; flex-wrap: wrap; padding: 12px var(--ss-pad); }
@@ -214,11 +207,10 @@ code, .ss-code { font-family: var(--ss-font-mono); font-size: 13px; }
 .ss-tile-label { color: var(--ss-muted); font-size: 12px; margin-top: 2px; }
 
 /* ---- SearchBox / inputs ----
- * Grounded against shadcn/ui's Input: fixed height (h-9/36px, same fixed-
- * height convention as .ss-btn so a button and an input sitting side by
- * side line up), shadow-xs (already our --ss-shadow token), and a
- * focus-visible glow ring (border + soft box-shadow halo) instead of a
- * plain outline.
+ * Grounded against shadcn/ui's Input: a fixed 36px height (h-9, the same
+ * fixed-height convention as .ss-btn, so a button and an input side by side
+ * line up), shadow-xs (our --ss-shadow token), and a focus-visible glow
+ * ring of border plus soft box-shadow halo instead of a plain outline.
  */
 
 .ss-search, .ss-input, select.ss-input {
@@ -244,12 +236,13 @@ code, .ss-code { font-family: var(--ss-font-mono); font-size: 13px; }
 }
 .ss-search:disabled, .ss-input:disabled { opacity: 0.5; cursor: not-allowed; }
 
-/* Checkbox: native appearance can't hit the rounded-square + checkmark
-   look, so it's rebuilt with appearance:none + a masked check icon. Checked
-   state reuses the button-primary pair (--ss-text bg / --ss-bg icon) rather
-   than --ss-accent, so the icon is guaranteed to contrast -- text and bg
-   are chosen to contrast with each other by definition in every theme,
-   where an accent color's contrast against its own fill isn't guaranteed. */
+/* Checkbox: the native appearance can't hit the rounded-square-plus-
+   checkmark look, so it's rebuilt with appearance:none and a masked check
+   icon. The checked state reuses the button-primary pair (--ss-text bg,
+   --ss-bg icon) rather than --ss-accent, so the icon is guaranteed to
+   contrast. Every theme picks text and bg to contrast with each other by
+   definition, while an accent's contrast against its own fill is not
+   guaranteed. */
 input[type="checkbox"].ss-input {
   appearance: none; -webkit-appearance: none;
   width: 16px; height: 16px; padding: 0; flex: 0 0 auto;
@@ -264,11 +257,11 @@ input[type="checkbox"].ss-input:checked::after {
   mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M20 6 9 17l-5-5'/%3E%3C/svg%3E") center/70% no-repeat;
 }
 
-/* Switch (FieldInput type "toggle"): for a boolean read as on/off state,
-   not a list selection -- same --ss-text/--ss-bg contrast pair as the
+/* Switch (FieldInput type "toggle"): for a boolean read as on/off state
+   rather than a list selection. Same --ss-text/--ss-bg contrast pair as the
    checkbox's checked state, for the same guaranteed-contrast reason. */
 .ss-switch {
-  /* appearance:none is required -- some Chromium builds paint an
+  /* appearance:none is required. Some Chromium builds paint an
      experimental native UA track for button[role="switch"] that overrides
      background-color regardless of what's computed underneath it. */
   appearance: none; -webkit-appearance: none;
@@ -293,9 +286,9 @@ input[type="checkbox"].ss-input:checked::after {
    as .ss-input, but .ss-input's fixed 36px height would clip everything
    after line one. min-height is the floor, max-height the ceiling, and
    FieldInput's JS sets the height in between to fit the text as you type.
-   resize: none drops the browser's drag handle -- nothing else in the kit
-   is hand-resizable, and its diagonal stripes are the one bit of unstyled
-   UA chrome that shows through the theme.
+   resize: none drops the browser's drag handle. Nothing else in the kit is
+   hand-resizable, and its diagonal stripes are the one bit of unstyled UA
+   chrome that shows through the theme.
    overflow-y starts hidden and FieldInput flips it to auto only once its
    own measurement confirms the text exceeds max-height; see components.js
    for why the browser's own overflow detection isn't trusted here. Hidden
@@ -308,16 +301,15 @@ textarea.ss-input {
 }
 
 /* ---- Buttons ----
- * Base (no modifier) is the "outline" look: bordered, panel background --
- * already what it was, kept as-is since it was already right.
+ * Base (no modifier) is the outline look: bordered, panel background.
  * ss-btn-primary is a strong inverted fill (bg swaps to --ss-text, text
- * swaps to --ss-bg) rather than a soft accent tint -- swapping the *role*
- * of the two tokens auto-inverts correctly per theme with no light/dark
- * branching: near-black-on-white in a light theme, white-on-near-black in
- * a dark one, exactly the shadcn default-button convention.
- * ss-btn-icon is a same-height square for an icon-only button (pair it
- * with any fill variant, e.g. `ss-btn ss-btn-icon` or
- * `ss-btn ss-btn-primary ss-btn-icon`).
+ * swaps to --ss-bg) rather than a soft accent tint. Swapping the *role* of
+ * the two tokens inverts correctly per theme with no light/dark branching:
+ * near-black-on-white in a light theme, white-on-near-black in a dark one,
+ * which is the shadcn default-button convention.
+ * ss-btn-icon is a same-height square for an icon-only button. Pair it with
+ * any fill variant, e.g. `ss-btn ss-btn-icon` or
+ * `ss-btn ss-btn-primary ss-btn-icon`.
  */
 
 .ss-btn {
@@ -328,15 +320,14 @@ textarea.ss-input {
   font-family: var(--ss-font-body);
   transition: background var(--ss-motion), color var(--ss-motion), border-color var(--ss-motion), opacity var(--ss-motion);
 }
-/* Scoped to exclude the fill modifiers -- without :not(), this background
-   declaration cascades onto every button regardless of variant (they all
-   carry the base .ss-btn class too), silently overriding e.g.
-   .ss-btn-primary's own background on hover since "two different
-   properties from two matching rules both apply" -- opacity from
-   .ss-btn-primary:hover AND background from this rule -- not "the later
-   rule wins," which only applies when the SAME property is contested.
-   The result was white-on-white: primary's bg got pulled toward panel
-   while its text (chosen to contrast the *original* bg) stayed put. */
+/* Scoped to exclude the fill modifiers. Without :not(), this background
+   cascades onto every button regardless of variant, since they all carry
+   the base .ss-btn class too, and silently overrides .ss-btn-primary's own
+   hover background. Two different properties from two matching rules both
+   apply (opacity from .ss-btn-primary:hover, background from here); "the
+   later rule wins" only settles a contest over the SAME property. The
+   result is white-on-white: primary's bg gets pulled toward panel while
+   its text, chosen to contrast the original bg, stays put. */
 .ss-btn:hover:not(.ss-btn-primary):not(.ss-btn-secondary):not(.ss-btn-ghost):not(.ss-btn-destructive) {
   background: color-mix(in srgb, var(--ss-text) 5%, var(--ss-panel));
 }
@@ -346,19 +337,19 @@ textarea.ss-input {
 .ss-btn-icon svg { width: 16px; height: 16px; }
 
 .ss-btn-primary { background: var(--ss-text); border-color: var(--ss-text); color: var(--ss-bg); }
-/* opacity, not a background swap -- dims the whole element (bg+text
-   together) so contrast is preserved automatically, and it works without
-   knowing this variant's actual fill color, which some themes override
-   entirely (e.g. retro's primary uses --ss-accent, not --ss-text). */
+/* opacity, not a background swap. It dims bg and text together, so
+   contrast is preserved automatically, and it works without knowing this
+   variant's actual fill color. Some themes override that entirely: retro's
+   primary uses --ss-accent, not --ss-text. */
 .ss-btn-primary:hover { opacity: 0.85; }
 
-/* Derived from --ss-muted + --ss-panel rather than --ss-th-bg: th-bg is
-   tuned per-theme for the table-header context specifically (e.g.
-   brutalist sets it to pure black with a separate white-text override for
-   that one context) and isn't safe to reuse as a general surface color --
-   it collided black-on-black there. --ss-muted is guaranteed distinct from
-   both --ss-panel and --ss-text in every theme by construction, so mixing
-   it into the panel color can't collide the same way. */
+/* Derived from --ss-muted and --ss-panel rather than --ss-th-bg. th-bg is
+   tuned per-theme for the table-header context specifically (brutalist sets
+   it to pure black, with a separate white-text override for that one
+   context) and isn't safe to reuse as a general surface color: it collided
+   black-on-black there. --ss-muted is distinct from both --ss-panel and
+   --ss-text in every theme by construction, so mixing it into the panel
+   color can't collide the same way. */
 .ss-btn-secondary { background: color-mix(in srgb, var(--ss-muted) 16%, var(--ss-panel)); border-color: transparent; color: var(--ss-text); }
 .ss-btn-secondary:hover { background: color-mix(in srgb, var(--ss-muted) 26%, var(--ss-panel)); }
 
@@ -369,15 +360,14 @@ textarea.ss-input {
 .ss-btn-destructive:hover { opacity: 0.85; }
 
 /* ---- DataGrid ----
- * One connected card, not a grid of boxes: a single border wraps the whole
- * table (.ss-grid-scroll), and rows are separated by horizontal dividers
- * only -- no vertical lines between columns. The divider color is
+ * One connected card, not a grid of boxes. A single border wraps the whole
+ * table (.ss-grid-scroll) and rows are separated by horizontal dividers
+ * only, with no vertical lines between columns. The divider color is a
  * color-mix against --ss-text rather than the flat --ss-border token:
- * --ss-border alone (10% white in the default dark theme, matching
- * shadcn/ui's own token) reads as barely-there once actually rendered, so
- * table lines specifically need more contrast than that to read as
- * "connected" rather than "absent." Mixing against --ss-text keeps it
- * self-scaling correctly in both light and dark without a dedicated token.
+ * --ss-border alone is 10% white in the default dark theme, matching
+ * shadcn/ui's own token, and reads as barely-there once rendered on a
+ * table. Mixing against --ss-text self-scales in both light and dark
+ * without needing a dedicated token.
  */
 
 .ss-grid-toolbar { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; gap: 10px; }
@@ -436,10 +426,11 @@ textarea.ss-input {
 
 /* ---- RecordForm ----
  * Label grounded against shadcn/ui's Label: text-sm font-medium, regular
- * (not muted) foreground color -- shadcn has no muted/small-caps label
- * convention, so this dropped the old 12px-muted treatment to match.
- * No .ss-form-actions -- RecordForm autosaves per field (same convention
- * as DataGrid's inline editing), so there's no Save/Cancel row to style.
+ * foreground color rather than muted. shadcn has no muted or small-caps
+ * label convention.
+ * There is no .ss-form-actions, because RecordForm autosaves per field, the
+ * same convention as DataGrid's inline editing, leaving no Save/Cancel row
+ * to style.
  */
 
 .ss-form { display: flex; flex-direction: column; gap: 14px; }
@@ -447,7 +438,7 @@ textarea.ss-input {
 .ss-form-field-toggle { flex-direction: row; align-items: center; justify-content: space-between; gap: 12px; }
 .ss-form-label { font-size: var(--ss-font-size); font-weight: 500; color: var(--ss-text); }
 
-/* ---- StatusDot (icon, not a dot -- see components.js) ---- */
+/* ---- StatusDot (an icon, not a dot; see components.js) ---- */
 
 .ss-status { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--ss-muted); }
 .ss-status-icon {
@@ -465,13 +456,13 @@ textarea.ss-input {
   .ss-status.stale .ss-status-icon { animation: none; } /* icon shape + warn color alone still read as "reconnecting" */
 }
 
-/* ---- Badges / pills (pure CSS -- <span class="ss-badge">) ----
- * Default is a quiet neutral pill: no color, no dot -- a dot never earns
- * its place (it duplicates what color/text already say); an icon can, when
- * one is genuinely meaningful, as a child element/SVG inside the span
- * (gap: 6px already spaces it). Color is reserved for variants that carry
- * real meaning (destructive/success/warning) -- a badge is a status/type
- * signal, not a decorative rainbow for arbitrary labels.
+/* ---- Badges / pills (pure CSS: <span class="ss-badge">) ----
+ * Default is a quiet neutral pill with no color and no dot. A dot never
+ * earns its place, since it duplicates what color and text already say. An
+ * icon can, when one is genuinely meaningful, as a child SVG or <img>
+ * inside the span (gap: 6px already spaces it). Color is reserved for
+ * variants that carry real meaning (destructive/success/warning). A badge
+ * is a status or type signal, not decoration for arbitrary labels.
  */
 
 .ss-badge {
@@ -484,16 +475,16 @@ textarea.ss-input {
 }
 .ss-badge svg, .ss-badge img { width: 12px; height: 12px; flex: 0 0 auto; }
 
-/* Status/type variants -- use these when the badge means something. */
+/* Status/type variants: use these when the badge means something. */
 .ss-badge-destructive { background: color-mix(in srgb, var(--ss-badge-red) 13%, transparent);   color: var(--ss-badge-red); }
 .ss-badge-success     { background: color-mix(in srgb, var(--ss-badge-green) 13%, transparent);  color: var(--ss-badge-green); }
 .ss-badge-warning     { background: color-mix(in srgb, var(--ss-badge-amber) 13%, transparent);  color: var(--ss-badge-amber); }
 .ss-badge-accent      { background: var(--ss-accent-bg); color: var(--ss-accent); }
 
 /* ---- Segmented control (Tabs with {variant:"segmented"}) ----
- * A boxed track holding plain-text items; the active item gets its own
- * bordered pill (background + border + shadow) -- that's the separation,
- * on its own, from its neighbors.
+ * A boxed track holding plain-text items. The active item gets its own
+ * bordered pill (background, border, shadow), and that pill alone is what
+ * separates it from its neighbors.
  */
 
 .ss-segmented {
@@ -511,8 +502,8 @@ textarea.ss-input {
   box-shadow: var(--ss-shadow);
 }
 
-/* ---- FlowChart (JS block -- nodes actually connected by drawn SVG edges,
-   not text arrows; see components.js FlowChart) ---- */
+/* ---- FlowChart (JS block: nodes connected by drawn SVG edges, not text
+   arrows; see components.js FlowChart) ---- */
 
 .ss-flowchart { position: relative; }
 .ss-flowchart svg { position: absolute; inset: 0; width: 100%; height: 100%; z-index: 0; overflow: visible; }
@@ -576,9 +567,9 @@ textarea.ss-input {
 @media (max-width: 800px) { .ss-doc { grid-template-columns: 1fr; } .ss-sidenav { display: none; } }
 
 /* ---- Fact table (definition rows, like a spec sheet) ----
- * Same divider-contrast reasoning as DataGrid: color-mix against --ss-text
- * rather than the flatter --ss-border, so rows read as connected by a
- * visible line rather than floating with barely-there separation.
+ * Same divider-contrast reasoning as DataGrid: a color-mix against
+ * --ss-text rather than the flatter --ss-border, so rows read as connected
+ * by a visible line rather than floating.
  */
 
 .ss-facts {

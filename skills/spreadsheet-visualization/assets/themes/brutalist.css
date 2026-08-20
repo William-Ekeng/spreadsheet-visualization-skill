@@ -1,4 +1,4 @@
-/* THEME: brutalist -- load after base.css.
+/* THEME: brutalist. Load after base.css.
  * Raw and loud: pure black on white, zero radius, thick borders, hard offset
  * shadows, uppercase display type, no motion. Chart palette validated
  * (dataviz six checks) against #ffffff.
@@ -68,13 +68,12 @@
 .ss-badge { border-color: currentColor; border-radius: 0; font-weight: 700; text-transform: uppercase; }
 
 /* Black-filled elements (primary button, checked checkbox) need a shadow
-   that ISN'T also black -- a black hard-offset shadow behind a black fill
-   has no edge between "the element" and "its own shadow," so the two read
-   as one undifferentiated blob instead of a crisp raised block. Swap to a
-   concrete gray for exactly the elements that are black-filled -- reads
-   as raw poured concrete, which fits brutalism harder than the yellow
-   highlighter does here (that stays reserved for actual active/selected
-   state elsewhere: badge-accent, header sort arrows, focus rings).
+   that isn't also black. A black hard-offset shadow behind a black fill
+   leaves no edge between the element and its own shadow, so the two read as
+   one blob instead of a crisp raised block. These elements get a concrete
+   gray instead, which reads as raw poured concrete. The highlighter yellow
+   stays reserved for actual active or selected state: badge-accent, header
+   sort arrows, focus rings.
    The checkbox is a 16px control, not a card, so the base --ss-shadow (4px,
    tuned for panels) is oversized on it. Both states pin to the 2px offset
    .ss-btn uses. Only the color changes between them, never the offset, or
@@ -84,20 +83,19 @@ input[type="checkbox"].ss-input { box-shadow: 2px 2px 0 #000000; }
 input[type="checkbox"].ss-input:checked { box-shadow: 2px 2px 0 #9c9c9c; }
 
 /* The switch thumb is always a circle (base.css), but --ss-shadow here is
-   a hard-edged, unblurred, square-cornered offset -- a square shadow
-   behind a round knob reads as a geometry mismatch regardless of color,
-   the kind of "off" a hard-offset shadow should never produce. Small round
-   controls don't need the raised-card treatment the shadow token is for;
-   the track's own border + fill already give the switch enough definition. */
+   a hard-edged, unblurred, square-cornered offset, and a square shadow
+   behind a round knob reads as a geometry mismatch whatever its color.
+   Small round controls don't need the raised-card treatment the shadow
+   token is for. The track's own border and fill define the switch. */
 .ss-switch-thumb { box-shadow: none; }
 
 /* pager buttons square + bold */
 .ss-pager button { font-weight: 900; }
 
-/* --ss-accent, --ss-border, and --ss-text are all pure #000000 here (the
-   whole point of brutalism) -- but base.css's generic focus ring derives
-   its color from --ss-accent, and the switch's checked-track color from
-   --ss-text. Both collapse to black-on-black against this theme's already-
+/* --ss-accent, --ss-border, and --ss-text are all pure #000000 here, which
+   is the whole point of brutalism. But base.css's generic focus ring
+   derives its color from --ss-accent, and the switch's checked-track color
+   from --ss-text. Both collapse to black-on-black against this theme's already-
    black 2px borders, so a focused input or a toggled switch shows almost
    no visible state change. Use the highlighter yellow already established
    here for "active" (badge-accent, header sort arrows) instead. */

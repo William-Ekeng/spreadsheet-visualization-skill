@@ -17,9 +17,9 @@
 <body>
 <!--
   Kitchen sink for theme review: every block rendered once against sample
-  data, with a live theme switcher. Open directly (no server needed) --
-  writes mutate the in-memory sample so editing/adding/deleting can be
-  felt per theme. Charts re-read tokens on refresh after each switch.
+  data, with a live theme switcher. Open it directly, no server needed.
+  Writes mutate the in-memory sample, so editing, adding, and deleting can
+  be felt per theme. Charts re-read tokens on refresh after each switch.
 -->
 
 <div class="switcher ss-panel" style="padding:8px 12px;">
@@ -185,7 +185,7 @@ Collapsible(steps, { num: 3, title: "Approve, then promote", subtitle: "one clic
 // "textarea" and the form renders the multi-line editor for it.
 RecordForm(document.getElementById("form"), store, { sheet: "Products", row: store.sheets.Products.rows[0], columns: ["Product", "Region", "Units", "Active", "Notes"] });
 
-/* --- theme switcher ---------------------------------------------------- */
+/* ---- theme switcher ---- */
 document.getElementById("themeSelect").onchange = e => {
   const name = e.target.value;
   const link = document.getElementById("themeLink");

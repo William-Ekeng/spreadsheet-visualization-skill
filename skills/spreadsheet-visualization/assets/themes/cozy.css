@@ -1,4 +1,4 @@
-/* THEME: cozy -- load after base.css.
+/* THEME: cozy. Load after base.css.
  * Warm cafe: latte creams, terracotta, big soft radii, gentle shadows,
  * generous padding, humanist serif display. Chart palette validated
  * (dataviz six checks) against the panel #fdf6ec.
@@ -52,8 +52,8 @@
 
 /* Effects tokens can't express -------------------------------------------- */
 
-/* extra-round pills and inputs; buttons feel like soft buttons.
-   (height is fixed in base.css -- only shape/horizontal padding here.) */
+/* Extra-round pills and inputs. Height is fixed in base.css, so only
+   shape and horizontal padding belong here. */
 .ss-btn { border-radius: 999px; padding-left: 20px; padding-right: 20px; }
 .ss-btn-icon { padding-left: 0; padding-right: 0; }
 .ss-search, .ss-input, select.ss-input { border-radius: 12px; }

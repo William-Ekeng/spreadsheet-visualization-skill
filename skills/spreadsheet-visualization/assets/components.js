@@ -1,24 +1,27 @@
 /*
- * components.js -- UI building blocks for spreadsheet-backed apps.
+ * components.js: UI building blocks for spreadsheet-backed apps.
  *
- * Philosophy: no fixed page structure. Each component renders into a
- * container element you give it and does one job. The composing page (which
- * the agent writes per-spreadsheet, based on what the data is *for*)
- * decides which blocks exist, where they sit, and how they're wired
- * together. Every component takes (containerEl, store, opts) and returns an
- * object with at least { el, destroy }.
+ * There is no fixed page structure. Each component renders into a container
+ * element you give it and does one job. The composing page, written per
+ * spreadsheet based on what the data is *for*, decides which blocks exist,
+ * where they sit, and how they're wired together. Every component takes
+ * (containerEl, store, opts) and returns an object with at least
+ * { el, destroy }.
  *
  * Blocks:
- *   Tabs        -- switch between sheets (or any named views)
- *   MetaPanel   -- key/value strip for a sheet's metadata block
- *   StatTile    -- one aggregate number (sum/avg/count/custom) that stays live
- *   SearchBox   -- text input emitting a row-filter predicate
- *   DataGrid    -- paginated, sortable, editable, formula-aware table
- *   ChartBlock  -- Chart.js chart over sheet rows (requires chart.js loaded)
- *   FieldInput  -- one typed editor (text/number/date/select/checkbox/
- *                  toggle/textarea)
- *   RecordForm  -- edit a single row as a form of FieldInputs
- *   StatusDot   -- connection indicator for the store
+ *   Tabs         switch between sheets (or any named views)
+ *   MetaPanel    key/value strip for a sheet's metadata block
+ *   StatTile     one aggregate number (sum/avg/count/custom) that stays live
+ *   SearchBox    text input emitting a row-filter predicate
+ *   DataGrid     paginated, sortable, editable, formula-aware table
+ *   ChartBlock   Chart.js chart over sheet rows (requires chart.js loaded)
+ *   FieldInput   one typed editor (text/number/date/select/checkbox/
+ *                toggle/textarea)
+ *   RecordForm   edit a single row as a form of FieldInputs
+ *   Collapsible  expandable card, chainable into a step timeline
+ *   SideNav      sticky anchor nav with scrollspy
+ *   FlowChart    nodes joined by drawn SVG edges
+ *   StatusDot    connection indicator for the store
  *
  * All DOM text is set via textContent (never innerHTML with data) so cell
  * values containing markup can't inject into the page.
@@ -89,7 +92,7 @@ function StatTile(container, store, { label, sheet, compute, format } = {}) {
   const render = () => {
     const data = store.sheet(typeof sheet === "function" ? sheet() : sheet);
     let v;
-    try { v = compute(data.rows, data); } catch (e) { v = "–"; }
+    try { v = compute(data.rows, data); } catch { v = "–"; }
     valueEl.textContent = format ? format(v) : String(fmtCell(v));
   };
   const unsub = store.subscribe(render);
@@ -127,7 +130,7 @@ function SearchBox(container, { placeholder = "Search…", columns, onChange } =
   });
   wrap.append(icon, input);
   container.appendChild(wrap);
-  // .el stays the <input> itself (not the wrapper) -- existing compositions
+  // .el is the <input> itself, not the wrapper. Existing compositions
   // already reach in via search.el.value, so that contract can't change.
   return { el: input, clear: () => { input.value = ""; onChange(null); }, destroy: () => wrap.remove() };
 }
@@ -240,7 +243,7 @@ function DataGrid(container, store, opts = {}) {
       }
       cols.forEach(h => {
         const td = el("td");
-        const formula = store.sheet(sheetName()).formulas[`${row._row}:${h}`];
+        const formula = data.formulas[`${row._row}:${h}`];
         const display = format[h] ? format[h](row[h]) : fmtCell(row[h]);
         if (formula) {
           td.className = "ss-formula";
@@ -311,12 +314,12 @@ function DataGrid(container, store, opts = {}) {
 
 /* -------------------------------------------------------------- ChartBlock
  * Requires Chart.js to be loaded by the composing page (CDN script tag).
- * opts.x / opts.y fix the fields; opts.controls adds dropdowns to change
- * them; opts.aggregate ("sum"|"avg"|"count") groups rows by x first, which
- * is usually what a categorical chart actually wants. opts.centerText (
- * doughnut only) draws the live sum of the current data in the ring's
- * center, recomputed from whatever's actually plotted -- not a separate
- * number that could drift from the chart.
+ * opts.x / opts.y fix the fields. opts.controls adds dropdowns to change
+ * them. opts.aggregate ("sum"|"avg"|"count") groups rows by x first, which
+ * is usually what a categorical chart actually wants. opts.centerText
+ * (doughnut only) draws the live sum of the current data in the ring's
+ * center, recomputed from whatever is actually plotted rather than being a
+ * separate number that could drift from the chart.
  */
 
 function _doughnutCenterTextPlugin(textColor, mutedColor, fontFamily) {
@@ -412,8 +415,8 @@ function ChartBlock(container, store, opts = {}) {
 
     // Colors come from the theme's token contract, read at render time so a
     // theme swap restyles charts too (call .refresh() after changing themes).
-    // --ss-chart-1..N is a fixed categorical order -- multi-color forms
-    // (pie/doughnut) walk it in order; single-series forms use slot 1 only.
+    // --ss-chart-1..N is a fixed categorical order. Multi-color forms
+    // (pie/doughnut) walk it in order, single-series forms use slot 1 only.
     const css = getComputedStyle(document.documentElement);
     const palette = [];
     for (let i = 1; i <= 8; i++) {
@@ -422,11 +425,10 @@ function ChartBlock(container, store, opts = {}) {
     }
     if (!palette.length) palette.push(css.getPropertyValue("--ss-accent").trim() || "#2a78d6");
     const ink = css.getPropertyValue("--ss-muted").trim() || "#6b6b73";
-    // A hairline gridline, not a visible ruled line -- color-mix against
-    // the muted ink at low strength self-scales in both themes the same
-    // way DataGrid's row dividers do, rather than relying on --ss-border
-    // (sometimes too faint, see base.css) or a flat --ss-text line (would
-    // compete visually with the data itself).
+    // A hairline gridline, not a visible ruled line. color-mix against the
+    // muted ink at low strength self-scales in both themes the same way
+    // DataGrid's row dividers do. --ss-border is sometimes too faint (see
+    // base.css) and a flat --ss-text line would compete with the data.
     const gridColor = `color-mix(in srgb, ${ink} 15%, transparent)`;
     const fontBody = css.getPropertyValue("--ss-font-body").trim() || "sans-serif";
     const panel = css.getPropertyValue("--ss-panel").trim() || "#ffffff";
@@ -435,9 +437,6 @@ function ChartBlock(container, store, opts = {}) {
     const radiusSm = parseFloat(css.getPropertyValue("--ss-radius-sm")) || 6;
     const multiColor = chartType === "pie" || chartType === "doughnut";
     const colors = multiColor ? points.map((_, i) => palette[i % palette.length]) : palette[0];
-    // 2px surface gap between adjacent fills (mark spec + the secondary
-    // encoding that makes near-CVD-floor palette pairs legal).
-    const surface = panel;
     const isBar = chartType === "bar";
     const isLine = chartType === "line";
 
@@ -450,16 +449,17 @@ function ChartBlock(container, store, opts = {}) {
           label: label || yField,
           data: points.map(p => p.y),
           backgroundColor: colors,
-          borderColor: multiColor ? surface : colors,
+          // A 2px panel-colored gap between adjacent fills: the secondary
+          // encoding that makes near-CVD-floor palette pairs legible.
+          borderColor: multiColor ? panel : colors,
           borderWidth: multiColor ? 2 : isLine ? 2 : undefined,
           fill: false,
-          // Rounded top corners on bars, a gentle curve on lines, no
-          // per-point dots by default -- the shape vocabulary a chart like
-          // shadcn's reads as "designed" rather than "default library
-          // output" comes from these three small knobs, not color.
-          // Theme-aware, not a hardcoded 4px -- brutalist's --ss-radius-sm
-          // is 0 (sharp corners are the point), cozy's is larger; a fixed
-          // rounding would fight a zero-radius theme's whole aesthetic.
+          // Rounded bar tops, a gentle line curve, and no per-point dots.
+          // These three knobs, not color, are what make a chart read as
+          // designed rather than as default library output.
+          // The radius is theme-aware rather than a hardcoded 4px:
+          // brutalist sets --ss-radius-sm to 0 because sharp corners are
+          // the point, and cozy sets it larger.
           borderRadius: isBar ? { topLeft: radiusSm, topRight: radiusSm, bottomLeft: 0, bottomRight: 0 } : undefined,
           borderSkipped: isBar ? false : undefined,
           barPercentage: isBar ? 0.6 : undefined,
@@ -478,10 +478,10 @@ function ChartBlock(container, store, opts = {}) {
         maintainAspectRatio: true,
         interaction: { mode: "index", intersect: false },
         plugins: {
-          // A single-series chart needs no legend box -- the title/label names
-          // it. Multi-color forms keep it for slice identity, as small
-          // square swatches rather than Chart.js's default circles, to
-          // match the same square-swatch language the tooltip below uses.
+          // A single-series chart needs no legend box, since the title
+          // already names it. Multi-color forms keep one for slice
+          // identity, using small square swatches rather than Chart.js's
+          // default circles, matching the tooltip below.
           legend: {
             display: multiColor,
             labels: { color: ink, font: { family: fontBody }, usePointStyle: true, pointStyle: "rect", boxWidth: 10, boxHeight: 10, padding: 16 },
@@ -495,9 +495,9 @@ function ChartBlock(container, store, opts = {}) {
           },
         },
         scales: multiColor ? {} : {
-          // No vertical gridlines, no visible axis line, no tick marks --
-          // only a light horizontal ruling and muted labels carry the
-          // scale, so the data (bars/line) stays the visually loudest thing.
+          // No vertical gridlines, no axis line, no tick marks. A light
+          // horizontal ruling and muted labels carry the scale on their
+          // own, so the bars or line stay the loudest thing on the canvas.
           x: {
             ticks: { color: ink, font: { family: fontBody } },
             grid: { display: false },
@@ -528,10 +528,9 @@ function ChartBlock(container, store, opts = {}) {
 /* -------------------------------------------------------------- FieldInput
  * One typed editor. type comes from inferFieldType() or is passed
  * explicitly. Returns {el, get, set}. Pass onChange(value) to fire as soon
- * as this specific field commits its own edit (blur for text/number/date,
- * change for select/checkbox, click for toggle) -- the composing page (or
- * RecordForm) decides what "commits" means by whether it passes onChange;
- * without it, nothing fires and .get() remains the only way to read a value.
+ * as this field commits its own edit: blur for text/number/date, change for
+ * select/checkbox, click for toggle. Without onChange nothing fires and
+ * .get() is the only way to read the value.
  */
 
 function FieldInput(container, { type = "text", value = "", options = [], onChange } = {}) {
@@ -553,13 +552,13 @@ function FieldInput(container, { type = "text", value = "", options = [], onChan
     container.appendChild(input);
   } else if (type === "toggle") {
     // A boolean spreadsheet value (Yes/No, Active/Inactive) reads as an
-    // on/off state you flip, not a selection in a list -- a switch, not a
-    // checkbox. Same get/set("Yes"/"No") contract as the checkbox type so
-    // callers (RecordForm) don't need to know which one they got.
+    // on/off state you flip, so it gets a switch rather than a checkbox.
+    // Same get/set("Yes"/"No") contract as the checkbox type, so callers
+    // like RecordForm don't need to know which one they got.
     //
     // A <span>, not a <button>: some Chromium builds paint an experimental
     // native UA track for button[role="switch"] that overrides
-    // background-color at the compositing layer -- appearance:none doesn't
+    // background-color at the compositing layer. appearance:none doesn't
     // suppress it, only not being a form-control element does.
     const checked = ["yes", "true", "1", "y"].includes(String(value).trim().toLowerCase());
     input = document.createElement("span");
@@ -587,10 +586,10 @@ function FieldInput(container, { type = "text", value = "", options = [], onChan
       // Sets overflow explicitly rather than leaving it on overflow-y:auto.
       // Under a fractional device pixel ratio (the 0.667px border here is
       // the tell) scrollHeight and clientHeight round to the same integer
-      // while the sub-pixel layout still overflows by a hair, and the
-      // browser paints a scrollbar for content that visibly fits. Measuring
-      // with scrolling off and deciding here avoids that.
-      // maxHeight must be read in-DOM on every call: read once before
+      // while the sub-pixel layout still overflows by a hair, so the
+      // browser paints a scrollbar for content that visibly fits.
+      // Measuring with scrolling off and deciding here avoids that.
+      // maxHeight must be read in-DOM on every call. Read once before
       // appendChild it resolves to "none" and the cap silently never fires.
       const maxH = parseFloat(getComputedStyle(input).maxHeight) || Infinity;
       input.style.overflowY = "hidden";
@@ -603,13 +602,22 @@ function FieldInput(container, { type = "text", value = "", options = [], onChan
     input.addEventListener("input", autoGrow);
     if (onChange) {
       input.addEventListener("blur", () => onChange(input.value));
-      // Enter inserts a newline here (unlike single-line text) -- only
-      // Ctrl/Cmd+Enter commits, since a multi-line field's whole point is
-      // holding line breaks.
+      // Enter inserts a newline here, unlike single-line text, so only
+      // Ctrl/Cmd+Enter commits. A multi-line field exists to hold line
+      // breaks.
       input.addEventListener("keydown", e => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) { e.preventDefault(); input.blur(); } });
     }
     container.appendChild(input);
-    autoGrow(); // must run in-DOM: scrollHeight needs layout
+    // scrollHeight only means anything once the element has been laid out,
+    // so the first measurement has to happen with it in the document.
+    // RecordForm builds each field row detached and attaches it afterwards,
+    // which would otherwise measure every dimension as 0 and leave a long
+    // value clipped at min-height with overflow hidden. A microtask runs
+    // after the caller's synchronous build finishes, by which point the row
+    // is attached. The ResizeObserver below covers a page that defers
+    // attachment past that point.
+    if (input.isConnected) autoGrow();
+    else queueMicrotask(() => { if (input.isConnected) autoGrow(); });
     // Typing isn't the only thing that changes the line count. A narrower
     // column wraps more lines, so re-measure when the width changes too:
     // a Collapsible opening, a layout breakpoint, a sidebar toggling.
@@ -655,9 +663,9 @@ function FieldInput(container, { type = "text", value = "", options = [], onChan
 /* -------------------------------------------------------------- RecordForm
  * Edit one row as a labelled form. Field types are inferred per column
  * unless overridden via opts.types. Autosaves per field as soon as it
- * commits (same live-sync convention as DataGrid's inline editing) --
- * there's no batched Save/Cancel, since a spreadsheet-backed form has
- * nothing meaningful to "cancel": the moment a field commits, it's already
+ * commits, the same live-sync convention as DataGrid's inline editing.
+ * There is no batched Save/Cancel, because a spreadsheet-backed form has
+ * nothing meaningful to cancel: the moment a field commits, it is already
  * written to the file. onSaved(col, value), if given, fires after each
  * field's write completes.
  */
@@ -671,11 +679,10 @@ function RecordForm(container, store, { sheet, row, columns, types = {}, onSaved
   cols.forEach(col => {
     if (store.isFormulaCell(sheetName, row._row, col)) return; // formulas are not hand-editable
     const t0 = types[col] || inferFieldType(data, col);
-    // A boolean reads as an on/off switch here, not a checkbox -- see
-    // FieldInput's "toggle" type. Its field row is also laid out
-    // horizontally (label left, switch right) rather than label-above-
-    // control, since a compact switch reads better inline with its label
-    // than stacked above like a text/date/select field does.
+    // A boolean reads as an on/off switch here, not a checkbox. See
+    // FieldInput's "toggle" type. Its field row is laid out horizontally
+    // (label left, switch right) rather than label-above-control, since a
+    // compact switch reads better inline with its label.
     const t = t0 === "checkbox" ? "toggle" : t0;
     const fieldWrap = el("div", "ss-form-field" + (t === "toggle" ? " ss-form-field-toggle" : ""));
     fieldWrap.appendChild(el("label", "ss-form-label", col));
@@ -769,12 +776,11 @@ function SideNav(container, items) {
 }
 
 /* -------------------------------------------------------------- FlowChart
- * A small diagram of nodes connected by real drawn edges (SVG paths with
- * arrowheads, measured from actual DOM positions) -- not text arrows
- * between chips. Handles branching, not just a straight chain: nodes are
- * auto-arranged into layers by longest path from a root, so a node with
- * two children (or an edge that skips a layer) lays out correctly, closer
- * to how a mermaid/mindmap graph reads than a fixed left-to-right row.
+ * A small diagram of nodes connected by real drawn edges: SVG paths with
+ * arrowheads, measured from actual DOM positions, not text arrows between
+ * chips. It handles branching, not just a straight chain. Nodes are
+ * arranged into layers by longest path from a root, so a node with two
+ * children, or an edge that skips a layer, lays out correctly.
  *
  *   FlowChart(el, {
  *     direction: "LR",                                    // or "TB"
@@ -810,25 +816,23 @@ function FlowChart(container, { direction = "LR", nodes = [], edges = [] } = {})
   const labelEls = [];
 
   function layerOf() {
-    // Longest path from any root (no incoming edges) -- handles branches
-    // and edges that "skip" a layer without overlapping columns.
+    // Longest path from any root (a node with no incoming edges), which
+    // handles branches and edges that skip a layer without overlapping
+    // columns. Any node the walk never reaches, which means the edge list
+    // has a cycle, keeps its initial layer 0 and still renders.
     const incoming = new Map(nodes.map(n => [n.id, 0]));
     edges.forEach(e => incoming.set(e.to, (incoming.get(e.to) || 0) + 1));
     const layer = new Map(nodes.map(n => [n.id, 0]));
     const queue = nodes.filter(n => !incoming.get(n.id)).map(n => n.id);
     const remaining = new Map(incoming);
-    const order = [];
     while (queue.length) {
       const id = queue.shift();
-      order.push(id);
       edges.filter(e => e.from === id).forEach(e => {
         layer.set(e.to, Math.max(layer.get(e.to) || 0, (layer.get(id) || 0) + 1));
         remaining.set(e.to, remaining.get(e.to) - 1);
         if (remaining.get(e.to) === 0) queue.push(e.to);
       });
     }
-    // Any node not reached (cyclic input) falls back to layer 0 rather than
-    // vanishing, so a malformed edge list still renders something.
     return layer;
   }
 
@@ -894,8 +898,8 @@ function FlowChart(container, { direction = "LR", nodes = [], edges = [] } = {})
   }
 
   render();
-  // Layout depends on measured node sizes (font, padding, theme) -- redraw
-  // edges whenever the stage resizes, not just once on init.
+  // Layout depends on measured node sizes (font, padding, theme), so
+  // redraw edges whenever the stage resizes, not just once on init.
   const ro = new ResizeObserver(() => requestAnimationFrame(drawEdges));
   ro.observe(stage);
 
@@ -907,10 +911,10 @@ function FlowChart(container, { direction = "LR", nodes = [], edges = [] } = {})
 }
 
 /* -------------------------------------------------------------- StatusDot
- * Despite the name (kept for API stability), this renders an icon, not a
- * dot: a static checkmark when connected, a spinning loader while
- * reconnecting -- a color-only dot can't distinguish "connected" from
- * "currently retrying," an animated icon can.
+ * Despite the name, kept for API stability, this renders an icon rather
+ * than a dot: a static checkmark when connected, a spinning loader while
+ * reconnecting. A color-only dot can't tell "connected" apart from
+ * "currently retrying". An animated icon can.
  */
 
 const _STATUS_ICON_CHECK = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="m8.5 12.5 2.5 2.5 4.5-5"/></svg>';

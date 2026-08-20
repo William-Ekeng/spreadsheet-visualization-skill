@@ -1,37 +1,33 @@
-/* THEME: cyberpunk -- load after base.css.
+/* THEME: cyberpunk. Load after base.css.
  * Neon on deep violet, terminal type, glow instead of shadow.
  *
- * Rebuilt from a readability complaint against the first version, which
- * measured out to real WCAG failures, not just a subjective "feels dark"
- * impression -- computed with the standard relative-luminance contrast
- * formula (see references/theming.md for the full numbers and method):
- *   - --ss-border was 1.40:1 against --ss-panel (background research:
- *     WCAG 1.4.11 requires 3:1 for non-text UI boundaries) -- panel edges
- *     and input borders were essentially invisible.
- *   - --ss-th-bg was 1.03:1 against --ss-panel -- table headers didn't
- *     read as a different surface at all.
- *   - --ss-bg and --ss-panel were only ~1.05:1 apart -- cards barely
- *     lifted off the page, so the whole UI read as one undifferentiated
- *     dark mass (this is *why* the fix needed a real numeric pass rather
- *     than nudging hex values by eye: near-black lightness is extremely
- *     compressed by the sRGB gamma curve, so two colors that look
- *     obviously different as swatches can still be ~1.05:1 apart in
- *     actual contrast -- small HSL lightness deltas do almost nothing
- *     down here, the jump has to be much larger than intuition suggests).
- *   - --ss-danger and --ss-accent were the identical hex (#ff2975) --
- *     destructive and "this is branded/highlighted" read as the same
- *     signal, which is a legibility problem in the sense that matters
- *     most (you can't tell two different meanings apart).
+ * Every value below is measured with the standard relative-luminance
+ * contrast formula, not picked by eye (see references/theming.md for the
+ * method). Editing them by eye is how this theme broke the first time:
+ *   - --ss-border must clear 3:1 against --ss-panel, the WCAG 1.4.11
+ *     threshold for non-text UI boundaries. It measured 1.40:1 once, and
+ *     panel edges and input borders were invisible.
+ *   - --ss-th-bg must read as a different surface from --ss-panel. It
+ *     measured 1.03:1 once, so table headers did not.
+ *   - --ss-bg and --ss-panel measured ~1.05:1 apart once, and cards barely
+ *     lifted off the page. Near-black lightness is heavily compressed by
+ *     the sRGB gamma curve, so two colors that look obviously different as
+ *     swatches can still be ~1.05:1 apart. Small HSL lightness deltas do
+ *     almost nothing down here; the jump has to be much larger than
+ *     intuition suggests.
+ *   - --ss-danger and --ss-accent must not share a hex. They were both
+ *     #ff2975 once, so "destructive" and "branded/highlighted" carried
+ *     the same signal and you could not tell the two meanings apart.
  * Background research (see references/theming.md sources): avoid
  * near-pure-black bases (harsh, glare-prone); keep body/secondary text on
  * plain light neutrals, not neon, and reserve neon for accents/CTAs only;
- * don't overuse glow on already-legible text (previously applied to
- * every badge and every StatTile number regardless of meaning).
+ * don't overuse glow on already-legible text. It belongs on what carries
+ * meaning, not on every badge and every StatTile number.
  *
- * Surfaces now step bg(L6%) -> th-bg(L15%) -> panel(L26%) at the same
- * hue/saturation, individually verified against each other rather than
- * assumed from the HSL numbers. Chart palette validated (dataviz six
- * checks) against the new panel #38285d.
+ * Surfaces step bg(L6%) -> th-bg(L15%) -> panel(L26%) at the same hue and
+ * saturation, each pair verified against the others rather than assumed
+ * from the HSL numbers. Chart palette validated (dataviz six checks)
+ * against the panel #38285d.
  */
 
 :root {
