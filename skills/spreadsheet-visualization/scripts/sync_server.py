@@ -1,4 +1,13 @@
 #!/usr/bin/env python3
+# /// script
+# requires-python = ">=3.9"
+# dependencies = [
+#     "flask",
+#     "openpyxl",
+#     "watchdog",
+#     "filelock",
+# ]
+# ///
 """
 Live spreadsheet <-> HTML sync server.
 
@@ -15,20 +24,26 @@ rows, etc). The header row is auto-detected per sheet (first "wide" row),
 so metadata rows commonly found above the real table in exported reports
 (company name, report date, etc.) don't get misread as column headers.
 
-Usage:
+Usage (uv resolves the dependencies above automatically, and downloads a
+managed Python interpreter if the machine has none):
+    uv run sync_server.py --file "budget.xlsx" --ui "app.html" --port 5000
+    uv run sync_server.py --file "data.csv" --port 5000        # fallback UI
+    uv run --with xlrd sync_server.py --file "legacy_report.xls" --port 5000
+
+Or with a plain Python install:
+    pip install flask openpyxl watchdog filelock
     python sync_server.py --file "budget.xlsx" --ui "app.html" --port 5000
-    python sync_server.py --file "data.csv" --port 5000        # fallback UI
-    python sync_server.py --file "legacy_report.xls" --port 5000
 
 The server itself is UI-agnostic: it serves the composed HTML given via
 --ui (plus its sibling js/css files) and exposes the spreadsheet as a JSON
 API. What the page looks like is decided per-spreadsheet by whoever
 composes it from the building blocks in assets/ (see SKILL.md).
 
-Dependencies:
-    pip install flask openpyxl watchdog filelock
-    (openpyxl only needed for .xlsx/.xlsm files, not plain .csv;
-    xlrd only needed for legacy .xls files -- pip install xlrd)
+Dependencies: flask, openpyxl, watchdog, filelock (declared in the inline
+script metadata above, so `uv run` needs no separate install step).
+openpyxl is only exercised for .xlsx/.xlsm files, not plain .csv. xlrd is
+only needed for legacy .xls files: `uv run --with xlrd` or `pip install
+xlrd`. Keep the metadata block and this list in sync with the imports.
 
 Legacy .xls files: openpyxl can't read or write the old binary Excel format
 at all, and there's no actively-maintained pure-Python writer for it either.

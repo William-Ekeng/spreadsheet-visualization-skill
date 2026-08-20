@@ -82,15 +82,31 @@ patterns (search into grid, row into form, tabs driving everything).
    types, and roughly how many rows there are. This, plus the user's
    stated intent, determines the composition. Don't skip to writing HTML.
 
-2. **Check dependencies.** The server needs `flask`, `openpyxl` (for
-   .xlsx/.xlsm), `watchdog`, and `filelock`:
-   ```bash
-   pip install flask openpyxl watchdog filelock
-   ```
-   Legacy `.xls` file? Also `pip install xlrd`. The server converts it to
-   a sibling `.xlsx` once on startup (openpyxl can't touch the old binary
-   format) and tells the user; the original is left untouched. Formula
-   cells that need live recalculation? See
+2. **Check the runtime.** The server needs `flask`, `openpyxl` (for
+   .xlsx/.xlsm), `watchdog`, and `filelock`, declared as PEP 723 inline
+   metadata in `sync_server.py`. The preferred runner is `uv`, which
+   resolves them automatically and even downloads a Python interpreter
+   if the machine has none. Check what's available, in order:
+   - `uv` installed (`uv --version` works)? Nothing else to set up;
+     run the server with `uv run` in step 4.
+   - No `uv` but Python 3.9+ installed? Either install uv
+     (`winget install astral-sh.uv` / `brew install uv` /
+     `curl -LsSf https://astral.sh/uv/install.sh | sh`) or fall back to
+     pip:
+     ```bash
+     pip install flask openpyxl watchdog filelock
+     ```
+   - Neither uv nor Python? Install uv (it does not need Python), or
+     install Python via the platform package manager
+     (`winget install Python.Python.3.12` / `brew install python` /
+     `apt install python3 python3-pip`) and use the pip route. Tell the
+     user what you're installing and why before doing it.
+
+   Legacy `.xls` file? The server also needs `xlrd`
+   (`uv run --with xlrd ...` or `pip install xlrd`). It converts the file
+   to a sibling `.xlsx` once on startup (openpyxl can't touch the old
+   binary format) and tells the user; the original is left untouched.
+   Formula cells that need live recalculation? See
    `references/formulas-and-limitations.md` before promising anything:
    support is partial and display-only (`--recalc`).
 
@@ -108,8 +124,9 @@ patterns (search into grid, row into form, tabs driving everything).
 
 4. **Run it and verify in a browser:**
    ```bash
-   python sync_server.py --file "path/to/spreadsheet.xlsx" --ui "path/to/app.html" --port 5000
+   uv run sync_server.py --file "path/to/spreadsheet.xlsx" --ui "path/to/app.html" --port 5000
    ```
+   (or `python sync_server.py ...` on the pip route from step 2.)
    Open `http://127.0.0.1:5000` and actually exercise the app: the blocks
    render with real data, an edit in the browser lands in the file, an
    edit to the file (or in Excel) shows up in the browser within a second

@@ -49,8 +49,12 @@ does not exist.
 
 ## Skill-specific notes: spreadsheet-visualization
 
-- `scripts/sync_server.py` must stay dependency-light: Python stdlib plus
-  `openpyxl` only. CSV support must work with the stdlib alone.
+- `scripts/sync_server.py` must stay dependency-light. Its dependencies
+  (`flask`, `openpyxl`, `watchdog`, `filelock`) are declared three places
+  that must stay in sync: the PEP 723 inline metadata at the top of the
+  file, the docstring's dependency note, and SKILL.md's runtime step.
+  Adding a dependency means updating all three in the same commit and
+  having a strong reason; `xlrd` and `formulas` stay optional.
 - `assets/sheetsync.js`, `assets/components.js`, and `assets/base.css` are
   building blocks that generated apps link to. Treat their public APIs
   (component names, function signatures, CSS custom properties) as stable;

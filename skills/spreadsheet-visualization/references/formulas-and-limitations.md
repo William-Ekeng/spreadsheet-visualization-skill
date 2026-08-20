@@ -48,7 +48,7 @@ save time. Two consequences:
 2. **`--recalc` flag.** `sync_server.py --recalc` fills in formula cells
    that have no cached value using the optional
    [`formulas`](https://pypi.org/project/formulas/) package
-   (`pip install formulas`). Mainly useful for a workbook that's never been
+   (`uv run --with formulas` or `pip install formulas`). Mainly useful for a workbook that's never been
    opened in real Excel (e.g. built with openpyxl), where every formula cell
    would otherwise show blank. This is deliberately display-only and
    read-only: the computed values are merged into the JSON the frontend

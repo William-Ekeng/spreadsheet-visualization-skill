@@ -37,7 +37,7 @@ Copy `skills/spreadsheet-visualization/` into your project's `.claude/skills/` d
 
 ## Requirements
 
-- Python 3.9+ with `openpyxl` for Excel formats. CSV works with the standard library alone.
+- [uv](https://docs.astral.sh/uv/) (recommended), or Python 3.9+ with pip. The server declares its dependencies (`flask`, `openpyxl`, `watchdog`, `filelock`) as PEP 723 inline metadata, so `uv run sync_server.py ...` installs everything on the fly and even downloads a Python interpreter if the machine has none.
 - The spreadsheet file and the browser must be on the same machine (or LAN). The server needs direct filesystem access to the file.
 
 ## Repository layout
