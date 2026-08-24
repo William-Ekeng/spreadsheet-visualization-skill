@@ -14,6 +14,7 @@
  *   StatTile     one aggregate number (sum/avg/count/custom) that stays live
  *   SearchBox    text input emitting a row-filter predicate
  *   DataGrid     paginated, sortable, editable, formula-aware table
+ *   AddRow       standalone "create a record" button
  *   ChartBlock   Chart.js chart over sheet rows (requires chart.js loaded)
  *   FieldInput   one typed editor (text/number/date/select/checkbox/
  *                toggle/textarea)
@@ -148,7 +149,17 @@ function DataGrid(container, store, opts = {}) {
     onRowClick,               // (row) => void, e.g. to open a RecordForm
     format = {},              // {column: v => string} display formatters
     types = {},               // {column: "select"|"checkbox"|...} per-column override of inferFieldType, as in RecordForm
+    // Every string this block renders, so a page built on a non-English
+    // spreadsheet isn't stuck with English chrome next to French data.
+    // range gets (from, to, total), matches gets (n).
+    labels = {},
   } = opts;
+  const L = {
+    add: "+ Add row",
+    range: (from, to, total) => `${from}–${to} of ${total}`,
+    matches: n => `${n} match${n === 1 ? "" : "es"}`,
+    ...labels,
+  };
 
   const root = el("div", "ss-grid");
   const toolbar = el("div", "ss-grid-toolbar");
@@ -168,14 +179,10 @@ function DataGrid(container, store, opts = {}) {
   const isEditable = col => editable === true || (Array.isArray(editable) && editable.includes(col));
 
   if (addable) {
-    const addBtn = el("button", "ss-btn ss-btn-primary", "+ Add row");
-    addBtn.onclick = async () => {
-      const data = store.sheet(sheetName());
-      const values = {};
-      data.headers.forEach(h => values[h] = "");
-      await store.addRow(sheetName(), values);
-    };
-    toolbar.appendChild(addBtn);
+    // Same control AddRow renders, so the two can't drift apart. A grid
+    // that isn't editable can still carry this, and a page whose grid is
+    // read-only can place AddRow wherever it belongs instead.
+    AddRow(toolbar, store, { sheet, label: L.add });
   }
 
   function visibleRows() {
@@ -208,9 +215,9 @@ function DataGrid(container, store, opts = {}) {
       const next = el("button", "ss-btn", "›");
       next.disabled = page >= pageCount - 1;
       next.onclick = () => { page++; render(); };
-      pagerEl.append(prev, el("span", "", `${page * pageSize + 1}–${Math.min(rows.length, (page + 1) * pageSize)} of ${rows.length}`), next);
+      pagerEl.append(prev, el("span", "", L.range(page * pageSize + 1, Math.min(rows.length, (page + 1) * pageSize), rows.length)), next);
     } else if (filter) {
-      pagerEl.appendChild(el("span", "", `${rows.length} match${rows.length === 1 ? "" : "es"}`));
+      pagerEl.appendChild(el("span", "", L.matches(rows.length)));
     }
 
     // Column types for the inline picklist/checkbox editors, resolved once
@@ -310,6 +317,47 @@ function DataGrid(container, store, opts = {}) {
     setPage(p) { page = p; render(); },
     destroy: () => { unsub(); root.remove(); },
   };
+}
+
+/* ------------------------------------------------------------------ AddRow
+ * A standalone "create a record" control.
+ *
+ * Creating a record is a page-level capability, so it lives in its own
+ * block rather than as a DataGrid flag. A composition often wants a
+ * read-only grid (wide sheets and formatted money/date columns round-trip
+ * badly through inline cells) and still needs a way to add a row.
+ * RecordForm can't provide one, since it edits a row that already exists.
+ *
+ *   AddRow(el, store, {
+ *     sheet: "Commandes",
+ *     label: "+ Nouvelle commande",
+ *     values: () => ({ Statut: "-", Montant: 0 }),   // seed template defaults
+ *     onAdded: row => openForm(row),                  // row = absolute file row
+ *   });
+ */
+
+function AddRow(container, store, { sheet, label = "+ Add row", values, className, onAdded } = {}) {
+  const btn = el("button", className || "ss-btn ss-btn-primary", label);
+  const sheetName = () => (typeof sheet === "function" ? sheet() : sheet);
+  btn.onclick = async () => {
+    const name = sheetName();
+    const data = store.sheet(name);
+    const seed = typeof values === "function" ? values(data) : values;
+    // Default to a blank value per column so the new row is a real row the
+    // grid will show, rather than an append the reader can't see.
+    const payload = {};
+    data.headers.forEach(h => { payload[h] = ""; });
+    Object.assign(payload, seed || {});
+    btn.disabled = true;
+    try {
+      const row = await store.addRow(name, payload);
+      if (onAdded) onAdded(row);
+    } finally {
+      btn.disabled = false;
+    }
+  };
+  container.appendChild(btn);
+  return { el: btn, destroy: () => btn.remove() };
 }
 
 /* -------------------------------------------------------------- ChartBlock
@@ -920,17 +968,21 @@ function FlowChart(container, { direction = "LR", nodes = [], edges = [] } = {})
 const _STATUS_ICON_CHECK = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="m8.5 12.5 2.5 2.5 4.5-5"/></svg>';
 const _STATUS_ICON_SPINNER = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M21 12a9 9 0 1 1-2.64-6.36"/></svg>';
 
-function StatusDot(container, store) {
+function StatusDot(container, store, { labels } = {}) {
+  const L = { connected: "connected", reconnecting: "reconnecting…", ...labels };
   const wrap = el("span", "ss-status");
   const icon = el("span", "ss-status-icon");
-  const text = el("span", "", "connected");
+  const text = el("span", "", L.connected);
   wrap.append(icon, text);
   const render = ok => {
     icon.innerHTML = ok ? _STATUS_ICON_CHECK : _STATUS_ICON_SPINNER;
     wrap.classList.toggle("stale", !ok);
-    text.textContent = ok ? "connected" : "reconnecting…";
+    text.textContent = ok ? L.connected : L.reconnecting;
   };
-  render(true); // matches the store's own optimistic initial state
+  // Render what the store actually knows rather than assuming success.
+  // Until the first poll answers, that is "not connected yet", which is
+  // true; the store's loading overlay covers this moment on a healthy page.
+  render(store.connected === true);
   const unsub = store.onStatus(render);
   container.appendChild(wrap);
   return { el: wrap, destroy: () => { unsub(); wrap.remove(); } };

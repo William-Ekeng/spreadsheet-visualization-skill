@@ -94,6 +94,46 @@ save time. Two consequences:
   guess wrong. Check `sheet.header_row` in the `/api/data` response
   against the actual file before trusting it, and adjust
   `_detect_header_row`/`read_workbook`/`_xlsx_headers` if needed.
+- **Declared vs. real sheet extent.** `ws.max_row`/`ws.max_column` report
+  the range the file *declares*, which Excel routinely writes far larger
+  than the data. A template whose columns were formatted wholesale, or that
+  keeps a filler cell far down the sheet to pin the table's shape, commonly
+  declares the full 16,384 columns and a couple of thousand rows while
+  holding five real ones. `_used_bounds` (editable mode) and
+  `_used_bounds_from_rows` (read-only mode) measure the real extent from
+  the cells that hold values instead. Trusting the declared number breaks
+  three things at once: header detection never finds a "wide" row so every
+  sheet falls back to row 1, the parse walks 16,384 columns per row and
+  invents thousands of `colN` headers, and appends land below the reserved
+  block, outside whatever ranges the workbook's totals sum over. Rows with
+  no values at all are skipped, so a reserved block with a formula filled
+  down it doesn't flood the grid; `append_row` targets the first row whose
+  non-formula cells are empty, which is the row after the data on an
+  ordinary list and the next free slot inside the block on a template.
+- **Read speed on styled workbooks.** `read_workbook` loads in openpyxl's
+  `read_only` mode, which streams the sheet XML rather than building a full
+  cell model. On a workbook with thousands of pre-formatted rows that is
+  the difference between ~15s and ~0.05s per load (the real case that
+  prompted this went from 30s to 2s end to end). Writes still need the
+  editable model, so `_writable_workbook` keeps one open between edits and
+  a background thread warms it at startup; otherwise the user's first edit
+  pays a ~20s parse. That cached workbook is dropped whenever the watcher
+  sees an external change, because saving a copy parsed before someone
+  else's edit would silently revert it.
+- **Saving is deferred.** `wb.save()` rewrites the whole file whatever
+  changed (~2.9s on a 10k-row sheet), so an edit updates the in-memory
+  workbook and `_schedule_flush` writes once after a short quiet period.
+  A burst of edits costs one save. Anything that re-reads the file flushes
+  first, so the deferral is invisible to the browser, and a save that fails
+  is reported on the next `/api/version` poll rather than on the request
+  that made the edit. The window is small but real: a hard kill within it
+  loses the last edits. `sync_server.py` flushes on shutdown for the
+  ordinary case.
+- **Sheet order.** Flask sorts dict keys when serializing by default, which
+  would hand the frontend a workbook's sheets alphabetically. Order is
+  meaningful (a workbook of month sheets is in calendar order, not
+  Août/Avril/Décembre), so the server turns that off. Compositions can rely
+  on `store.sheetNames()` matching the workbook's own tab order.
 - **Concurrency.** Writes are guarded with a `filelock` so the HTML frontend
   and a human editing in Excel don't corrupt the file mid-save, but Excel
   itself locks the file while open on Windows. Writes from the API will

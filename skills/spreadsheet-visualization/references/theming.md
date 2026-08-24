@@ -22,6 +22,7 @@ all of them:
 | depth | `--ss-shadow` `--ss-shadow-pop` |
 | density | `--ss-pad` `--ss-gap` |
 | motion | `--ss-motion` (0s is a valid position; brutalist takes it) |
+| colour scheme | optional `@media (prefers-color-scheme: dark)` overrides of the colour tokens. `base.css` does this for the default; no shipped theme does |
 | charts | `--ss-chart-1` through `--ss-chart-6`: categorical slots in fixed order, never cycled |
 
 `ChartBlock` reads chart slots, ink, grid, and surface tokens at render
@@ -43,9 +44,24 @@ chart blocks so they repaint (see `theme-preview.html`).
 - **cyberpunk**: near-black violet, neon pink accent, terminal type,
   glow instead of shadow, scanline texture on panels.
 
-Plus `base.css` itself carries the neutral default (light) and a built-in
-dark (`<html data-theme="dark">`). Don't stack `data-theme="dark"` with a
-theme file; themes are self-contained.
+Plus `base.css` itself carries the neutral default, which follows the
+reader's OS setting: light normally, and the built-in dark palette under
+`prefers-color-scheme: dark`. A page can override that in either
+direction with `<html data-theme="dark">` or `data-theme="light">`.
+
+**Themes ignore all of this, and that is the current state rather than a
+considered position.** A theme file's `:root` is loaded after `base.css`
+and wins, so a themed page keeps its single look whatever the OS says.
+None of the five shipped themes defines a dark variant. Four are light
+and cyberpunk is dark, full stop. So a reader on a dark OS who asks for
+cozy gets a cream page.
+
+That leaves a real gap: colour scheme is a dimension of the contract that
+nothing yet implements. A theme *may* add its own
+`@media (prefers-color-scheme: dark)` block redefining its colour tokens,
+and it will work; none of them does. Don't stack `data-theme="dark"` with
+a theme file expecting a dark version of that theme, because the theme's
+own values win and you get a half-themed page.
 
 The default theme's neutrals and shape scale are grounded against
 shadcn/ui's documented default tokens. Not shadcn as a dependency (this
@@ -252,7 +268,15 @@ over the existing themes periodically, not only the one being edited.
 7. Open `assets/theme-preview.html` (serve it, don't file://) and switch
    to your theme: every block should visibly belong to it. If a block
    still looks like the default theme, you missed a dimension it uses.
-8. Scoped overrides last, and only for what tokens can't say. Keep them
+8. Decide whether the theme follows the OS into dark. Optional, and no
+   shipped theme does it yet, so there's no precedent to copy. If you do,
+   add an `@media (prefers-color-scheme: dark)` block redefining the
+   colour tokens only (shape, type and density shouldn't change with the
+   light level), and re-run the chart-palette and contrast checks against
+   the dark surfaces as well as the light ones. A theme with no such block
+   keeps its single look, which is a legitimate choice for a strongly
+   committed aesthetic.
+9. Scoped overrides last, and only for what tokens can't say. Keep them
    few; every override is a maintenance point when components evolve.
 
 ## Applying themes when composing

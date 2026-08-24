@@ -15,15 +15,17 @@ the composed HTML; the server serves that whole directory.
 ## SheetStore (sheetsync.js)
 
 ```js
-const store = new SheetStore({ api: "", pollMs: 1000 });
+const store = new SheetStore({ api: "", pollMs: 1000, loadingText: "Loading…", showLoading: true });
 store.subscribe(fn)          // fn(store) called whenever data changed; returns unsubscribe
 store.onStatus(fn)           // fn(connectedBool) on connect/disconnect transitions
+store.onError(fn)            // fn(message) when a write is refused (locked file, etc); writes also throw
+store.loaded                 // false until the first payload lands
 store.start()                // begin polling (cheap /api/version; full fetch only on change)
 store.sheetNames()           // ["Orders", ...]
 store.sheet(name)            // {headers, rows, formulas, meta, header_row}; rows carry _row (absolute file row)
 store.isFormulaCell(sheet, rowIdx, column)
 await store.saveCell(sheet, rowIdx, column, value)
-await store.addRow(sheet, {col: value, ...})
+await store.addRow(sheet, {col: value, ...})   // resolves to the new absolute file row
 await store.deleteRow(sheet, rowIdx)
 ```
 
@@ -44,14 +46,15 @@ without rebuilding blocks.
 | Block | Purpose | Key options / extras |
 |---|---|---|
 | `Tabs(el, items, opts)` | sheet/view switcher | `onSelect(name)`, `active`; extra: `.active` getter |
-| `MetaPanel(el, store, opts)` | key/value strip from `sheet.meta` | `sheet`; hides itself when meta is empty |
-| `StatTile(el, store, opts)` | one live aggregate number | `label`, `sheet`, `compute(rows, sheetData)`, `format(v)` |
+| `MetaPanel(el, store, opts)` | key/value strip from `sheet.meta` | `sheet`; hides itself when meta is empty; extra: `.refresh()` |
+| `StatTile(el, store, opts)` | one live aggregate number | `label`, `sheet`, `compute(rows, sheetData)`, `format(v)`; extra: `.refresh()` |
 | `SearchBox(el, opts)` | text search producing a row predicate | `columns` (limit searched fields), `onChange(predicateOrNull)`; renders a leading search icon; extra: `.clear()` |
-| `DataGrid(el, store, opts)` | paginated sortable editable table | `sheet`, `columns` (subset+order), `editable` (bool or array of column names), `pageSize`, `deletable`, `addable`, `onRowClick(row)`, `format` ({col: fn}), `types` ({col: type}, overrides `inferFieldType` per column, same convention as `RecordForm`). An editable column typed `"select"` renders an inline dropdown of that column's distinct values; one typed `"checkbox"` renders the same checkbox `FieldInput` uses. Both write on change. Every other editable column stays a contentEditable text cell. Renders as one connected bordered card with horizontal-only row dividers (no vertical column lines); extras: `.setFilter(fn)`, `.setPage(n)`, `.refresh()` |
-| `ChartBlock(el, store, opts)` | Chart.js chart | `sheet`, `x`, `y`, `type`, `aggregate` (`"sum"\|"avg"\|"count"` groups by x, usually what categorical charts want), `topN` (default 30), `controls` (adds type/x/y dropdowns), `label`, `centerText` (doughnut only, draws the live sum + label in the ring's center); extra: `.setFields(x, y)` |
+| `DataGrid(el, store, opts)` | paginated sortable editable table | `sheet`, `columns` (subset+order), `editable` (bool or array of column names), `pageSize`, `deletable`, `addable`, `onRowClick(row)`, `format` ({col: fn}), `types` ({col: type}, overrides `inferFieldType` per column, same convention as `RecordForm`), `labels` ({add, range, matches}, see Language). An editable column typed `"select"` renders an inline dropdown of that column's distinct values; one typed `"checkbox"` renders the same checkbox `FieldInput` uses. Both write on change. Every other editable column stays a contentEditable text cell. Renders as one connected bordered card with horizontal-only row dividers (no vertical column lines); extras: `.setFilter(fn)`, `.setPage(n)`, `.refresh()` |
+| `AddRow(el, store, opts)` | standalone "create a record" button | `sheet`, `label`, `values` (object or `(sheetData) => object`, seeds template defaults), `className`, `onAdded(row)` where `row` is the absolute file row just created. Independent of `DataGrid`: a read-only grid can still have an add control, and `onAdded` lets a page open a form on the new row. `DataGrid`'s `addable` renders this same block in its toolbar |
+| `ChartBlock(el, store, opts)` | Chart.js chart | `sheet`, `x`, `y`, `type`, `aggregate` (`"sum"\|"avg"\|"count"` groups by x, usually what categorical charts want), `topN` (default 30), `controls` (adds type/x/y dropdowns), `label`, `centerText` (doughnut only, draws the live sum + label in the ring's center); extras: `.setFields(x, y)`, `.refresh()` |
 | `FieldInput(el, opts)` | one typed editor | `type` (from `inferFieldType`, plus `"toggle"`, an on/off switch not offered by inference but usable directly), `value`, `options`; extras: `.get()`, `.set(v)`. `"textarea"` renders a multi-line `<textarea class="ss-input">` instead of the single-line `<input>`. It grows with its content from 80px to 320px, then scrolls; the browser's drag-resize handle is off, so height is always driven by the text. Commits on blur or Ctrl/Cmd+Enter, since plain Enter inserts a newline |
 | `RecordForm(el, store, opts)` | edit one row as a form | `sheet`, `row`, `columns`, `types` (overrides), `onSaved(col, value)`; skips formula cells; autosaves per field as it commits (blur for text/number/date/textarea, change for select, click for toggle). No Save/Cancel, same live-sync convention as DataGrid |
-| `StatusDot(el, store)` | connection indicator | despite the name, renders an icon rather than a colored dot: a static checkmark (success green) when connected, a spinning loader (warn amber) while reconnecting. A color-only dot can't distinguish "connected" from "currently retrying"; an animated icon can. Respects `prefers-reduced-motion` (icon/color alone still carry the state without the spin). |
+| `StatusDot(el, store, opts)` | connection indicator | `labels` ({connected, reconnecting}); despite the name, renders an icon rather than a colored dot: a static checkmark (success green) when connected, a spinning loader (warn amber) while reconnecting. A color-only dot can't distinguish "connected" from "currently retrying"; an animated icon can. Respects `prefers-reduced-motion` (icon/color alone still carry the state without the spin). |
 | `Collapsible(el, opts)` | expandable card / step timeline | `num`, `title`, `subtitle`, `tag` + `tagClass` (badge on the right), `open`, `content` (string, Node, or `(bodyEl) => void` to render data-bound blocks inside); extras: `.body`, `.setOpen(v)` |
 | `SideNav(el, items)` | sticky sidebar nav with scrollspy | items: `[{label, target: "#section-id"}]`; highlights the section in view, smooth-scrolls on click |
 | `FlowChart(el, opts)` | nodes connected by real drawn SVG edges (mermaid/mindmap-style, not text arrows) | `direction` (`"LR"`\|`"TB"`), `nodes: [{id, label, sub, variant}]`, `edges: [{from, to, label}]`; auto-layers nodes by longest path from a root so branches (a node with two children, or a shortcut edge) lay out correctly, not just a straight chain; extras: `.relayout()`, `.destroy()` |
@@ -82,8 +85,10 @@ narrow screens). Arrange them however the app's purpose demands.
 
 **Theming.** `base.css` is structure plus a token contract; a theme is a
 stylesheet loaded after it that redefines the tokens. Five ship in
-`themes/` (brutalist, retro, lofi, cozy, cyberpunk), plus a built-in dark
-via `<html data-theme="dark">`. ChartBlock reads its palette and ink
+`themes/` (brutalist, retro, lofi, cozy, cyberpunk). The default follows
+the reader's OS colour scheme; `<html data-theme="dark">` or
+`data-theme="light">` forces one. Themes are single-look and ignore the
+OS setting (see `theming.md`). ChartBlock reads its palette and ink
 from tokens at render time, so themes restyle charts too. Full contract,
 shipped themes, and the write-a-new-theme procedure (including the
 mandatory chart-palette validation) are in `references/theming.md`.
@@ -148,8 +153,9 @@ lofi's dashed override still applies since it only touches border-style.
 Label/Checkbox source. Not the library itself; the same borrowed-values
 approach as the default theme's neutrals:
 
-- `.ss-input`/`.ss-search`/`select.ss-input` share a fixed 36px height
-  (so an input and a button sitting side by side line up), the same
+- `.ss-input`/`.ss-search`/`select.ss-input` share a fixed 36px height,
+  the same height `.ss-btn` uses, so an input and a button sitting side
+  by side line up, the same
   hairline `--ss-shadow` buttons/panels use, and a focus state that's a
   border-color change plus a soft 3px glow ring
   (`color-mix(--ss-accent 35%, transparent)`) rather than a plain outline.
@@ -178,7 +184,74 @@ Collapsible body, a ChartBlock behind a segmented toggle. Anything with
 no matching block gets built directly on `SheetStore` and still syncs
 live.
 
+## First paint
+
+Reading a workbook takes a moment, and a page that builds its blocks
+inside `subscribe()` renders nothing at all until data arrives. A bare
+header with a connected badge beside it reads as "loaded fine, nothing
+here", which is worse than a blank page because it asserts success.
+
+`SheetStore` handles this itself: `start()` mounts a `.ss-loading`
+overlay and removes it when the first payload lands. It fades in after
+0.35s, so a fast local read never flashes it, and it carries
+`role="status"` / `aria-live="polite"`. Set the wording with
+`loadingText` (match the data's language), or pass
+`showLoading: false` to own the moment yourself and use `store.loaded`
+to branch.
+
+`StatusDot` reports the store's real state rather than assuming
+success, so a page that can't reach the server shows "reconnecting"
+instead of claiming to be connected.
+
+## Language
+
+Every string the kit renders defaults to English, and a spreadsheet's
+data is often not. Mixing them ("Close" beside "Fermer", "3 matches"
+under "Commandes") reads as unfinished, and it is: the composition
+never chose a language.
+
+Decide once, from the data and the user, then carry it everywhere,
+through the kit's own labels and through every string the page writes
+itself. Keep them in one object at the top of the composition
+(`const t = { close: "Fermer", add: "+ Nouvelle commande", ... }`)
+rather than scattered through the file, so nothing is missed and the
+language is visible in one place. Column names always stay exactly as
+the file spells them, typos included; they are data, not copy.
+
+The overridable strings:
+
+| Block | Option | Defaults |
+|---|---|---|
+| `SearchBox` | `placeholder` | `"Search…"` |
+| `DataGrid` | `labels: {add, range, matches}` | `"+ Add row"`, `` (from,to,total) => `${from}–${to} of ${total}` ``, `` n => `${n} match${n===1?"":"es"}` `` |
+| `StatusDot` | `labels: {connected, reconnecting}` | `"connected"`, `"reconnecting…"` |
+
+`range` and `matches` are functions so a language can put the numbers
+where its grammar wants them. Everything else the user reads (buttons,
+headings, empty states, the close control on a detail panel) is
+written by the composition, so it is language-correct only if you make
+it so.
+
 ## Wiring patterns
+
+Adding a record when the grid is read-only. `addable` is a `DataGrid`
+option, but creating a record is a page-level capability, so a
+composition that makes its grid read-only would otherwise have no way
+to add one, and `RecordForm` only edits rows that already exist. Use
+`AddRow` anywhere on the page, and open the form on what it created:
+
+```js
+AddRow(barEl, store, {
+  sheet: "Commandes",
+  label: "+ Nouvelle commande",
+  values: () => ({ Statut: "-", Montant: 0 }),   // template defaults
+  onAdded: row => {
+    const fresh = store.sheet("Commandes").rows.find(r => r._row === row);
+    if (fresh) RecordForm(detailEl, store, { sheet: "Commandes", row: fresh });
+  },
+});
+```
+
 
 Search feeding a grid: `SearchBox(el, { onChange: f => grid.setFilter(f) })`.
 
@@ -190,7 +263,7 @@ clicking another row, is what ends the editing session:
 const grid = DataGrid(gridEl, store, { sheet: "Contacts", onRowClick: row => {
   detailEl.textContent = "";
   const closeBtn = document.createElement("button");
-  closeBtn.className = "ss-btn"; closeBtn.textContent = "Close";
+  closeBtn.className = "ss-btn"; closeBtn.textContent = t.close;  // page's own language, see Language below
   closeBtn.onclick = () => detailEl.textContent = "";
   detailEl.appendChild(closeBtn);
   RecordForm(detailEl, store, { sheet: "Contacts", row });
