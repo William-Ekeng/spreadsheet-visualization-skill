@@ -1,0 +1,300 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Suivi des commandes</title>
+<link rel="stylesheet" href="base.css">
+<script src="sheetsync.js"></script>
+<script src="components.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<style>
+  body { max-width: 1180px; margin: 0 auto; }
+  .page-head { display: flex; align-items: flex-start; gap: 16px; margin-bottom: 16px; }
+  .page-head h1 { margin-bottom: 2px; }
+  .page-head .sub { color: var(--ss-muted); font-size: 13px; }
+  .page-head .spacer { flex: 1; }
+  .view[hidden] { display: none; }
+  .toolbar { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; margin-bottom: 12px; }
+  .toolbar .search { flex: 1 1 240px; max-width: 320px; }
+  .toolbar .push { margin-left: auto; }
+  .note { color: var(--ss-muted); font-size: 12px; margin-top: 10px; }
+  .panel-title { display: flex; align-items: baseline; gap: 8px; margin-bottom: 10px; }
+  .panel-title .sub { color: var(--ss-muted); font-size: 12px; }
+</style>
+</head>
+<body>
+
+<header class="page-head">
+  <div>
+    <h1>Suivi des commandes</h1>
+    <div class="sub">Le classeur Excel reste la source unique : chaque modification est écrite dans le fichier.</div>
+  </div>
+  <div class="spacer"></div>
+  <div id="status"></div>
+</header>
+
+<div id="tabs"></div>
+
+<!-- Commandes -->
+<section class="view ss-stack" id="view-commandes" hidden>
+  <div class="ss-row" id="tiles"></div>
+
+  <div class="ss-panel">
+    <div class="toolbar">
+      <div class="search" id="search"></div>
+      <select class="ss-input" id="filtre-statut" style="width:auto;"></select>
+      <div class="push" id="add-commande"></div>
+    </div>
+    <div id="grid-commandes"></div>
+    <div class="note">Statuts prévus par le modèle : « - », « En cours », « Livré ». Produits et fournisseurs se gèrent dans l'onglet Paramètres.</div>
+  </div>
+
+  <div class="ss-panel">
+    <div class="panel-title">
+      <h2>Montant commandé par fournisseur</h2>
+      <span class="sub">total des commandes saisies</span>
+    </div>
+    <div id="chart"></div>
+  </div>
+</section>
+
+<!-- Prix -->
+<section class="view ss-stack" id="view-prix" hidden>
+  <div class="ss-panel">
+    <div class="panel-title">
+      <h2>Suivi des prix</h2>
+      <span class="sub">prix d'achat, marge et prix de vente par produit</span>
+    </div>
+    <div id="add-prix" style="margin-bottom:12px;"></div>
+    <div id="grid-prix"></div>
+    <div class="note" id="note-prix"></div>
+  </div>
+</section>
+
+<!-- Paramètres -->
+<section class="view" id="view-parametres" hidden>
+  <div class="ss-row">
+    <div class="ss-panel">
+      <div class="panel-title"><h2>Produits</h2></div>
+      <div id="grid-produits"></div>
+      <div class="note" id="note-produits"></div>
+    </div>
+    <div class="ss-panel">
+      <div class="panel-title"><h2>Fournisseurs</h2></div>
+      <div id="grid-fournisseurs"></div>
+      <div class="note" id="note-fournisseurs"></div>
+    </div>
+  </div>
+</section>
+
+<script>
+/* Toutes les chaînes de l'interface, en un seul endroit. Les noms de
+   colonnes viennent du fichier et ne sont jamais traduits ni corrigés. */
+const t = {
+  connected: "connecté",
+  reconnecting: "reconnexion…",
+  search: "Rechercher une commande…",
+  allStatuses: "Tous les statuts",
+  addOrder: "+ Nouvelle commande",
+  addPrice: "+ Nouvelle ligne de prix",
+  range: (from, to, total) => `${from}–${to} sur ${total}`,
+  matches: n => `${n} ligne${n === 1 ? "" : "s"}`,
+  formulaNote: "Coût de revient et Prix de vente sont des formules du classeur : lecture seule ici, recalculées à la prochaine ouverture du fichier dans Excel.",
+};
+
+const SHEET_ORDERS = "Commandes";
+const SHEET_PRICES = "Prix";
+const SHEET_PARAMS = "Paramètres";
+
+/* Libellés de colonnes tels qu'ils sont écrits dans le fichier. */
+const COL_DATE = 'Date Commande\n(touche Ctrl + ";" pour inscrire la date facilement)';
+const COL_FOURN = "Fournisseurs";
+const COL_MONTANT = "Montant";
+const COL_LIVRAISON = "Date de livraison";
+const COL_REGLE = "Montant réglé";
+const COL_DATE_REGL = "Date de règlement";
+const COL_AUTRE = "Autre critère à définir";
+const COL_STATUT = "Satut";
+const COL_RELANCE = "Livraison à relancer ?";
+
+const euros = new Intl.NumberFormat("fr-FR", { style: "currency", currency: "EUR" });
+const money = v => euros.format(Number(v) || 0);
+const filled = v => v != null && String(v).trim() !== "";
+/* Les lignes d'aide du fichier ("Pour ajouter un produit…") sont du texte,
+   pas des enregistrements : affichées sous la liste, pas dans la grille. */
+const isHint = v => filled(v) && String(v).startsWith("Pour ajouter");
+/* Le modèle épingle la fin de son bloc réservé avec une ligne de points
+   ("." dans chaque colonne). C'est de la mécanique de gabarit, pas une
+   commande : hors des grilles, des totaux et du graphique. */
+const isFiller = row => {
+  const vals = Object.entries(row).filter(([k]) => k !== "_row").map(([, v]) => v);
+  return vals.some(v => v === ".") && vals.every(v => v === "." || v == null || v === "");
+};
+
+const store = new SheetStore();
+/* Même interface que le store (sheet + subscribe) mais sans les lignes de
+   gabarit, pour les blocs qui agrègent au lieu d'éditer. */
+const view = {
+  sheet: name => {
+    const d = store.sheet(name);
+    return Object.assign({}, d, { rows: d.rows.filter(r => !isFiller(r)) });
+  },
+  subscribe: fn => store.subscribe(() => fn(view)),
+  onStatus: fn => store.onStatus(fn),
+  sheetNames: () => store.sheetNames(),
+  isFormulaCell: (...a) => store.isFormulaCell(...a),
+  saveCell: (...a) => store.saveCell(...a),
+  addRow: (...a) => store.addRow(...a),
+  deleteRow: (...a) => store.deleteRow(...a),
+};
+StatusDot(document.getElementById("status"), store, {
+  labels: { connected: t.connected, reconnecting: t.reconnecting },
+});
+
+let built = false;
+store.subscribe(() => {
+  if (built || !store.sheetNames().length) return;
+  built = true;
+  build();
+});
+store.start();
+
+function build() {
+  /* ---------------- Commandes ---------------- */
+  const tiles = document.getElementById("tiles");
+  const sumCol = col => rows => rows.reduce((a, r) => a + (Number(r[col]) || 0), 0);
+
+  StatTile(tiles, view, {
+    label: "Montant commandé", sheet: SHEET_ORDERS,
+    compute: sumCol(COL_MONTANT), format: money,
+  });
+  StatTile(tiles, view, {
+    label: "Montant réglé", sheet: SHEET_ORDERS,
+    compute: sumCol(COL_REGLE), format: money,
+  });
+  StatTile(tiles, view, {
+    label: "Reste à régler", sheet: SHEET_ORDERS,
+    compute: rows => sumCol(COL_MONTANT)(rows) - sumCol(COL_REGLE)(rows),
+    format: money,
+  });
+  StatTile(tiles, view, {
+    label: "Livraisons à relancer", sheet: SHEET_ORDERS,
+    compute: rows => rows.filter(r => filled(r[COL_RELANCE])).length,
+  });
+  StatTile(tiles, view, {
+    label: "Commandes renseignées", sheet: SHEET_ORDERS,
+    compute: rows => rows.filter(r => filled(r[COL_FOURN]) || filled(r[COL_DATE])).length,
+  });
+
+  const grid = DataGrid(document.getElementById("grid-commandes"), view, {
+    sheet: SHEET_ORDERS,
+    columns: [COL_DATE, COL_FOURN, COL_MONTANT, COL_LIVRAISON, COL_REGLE, COL_DATE_REGL, COL_STATUT, COL_RELANCE, COL_AUTRE],
+    editable: true,
+    deletable: true,
+    pageSize: 25,
+    /* Tout ce qui n'est ni date ni montant reste du texte libre. Les listes
+       de validation du classeur (produits, fournisseurs, statuts) vivent
+       dans la feuille Paramètres et dans une colonne masquée que l'API ne
+       sert pas : un menu déroulant n'offrirait que les valeurs déjà
+       saisies, et sur un modèle vide il en affiche une seule, comme si
+       toutes les lignes la portaient. */
+    types: { [COL_DATE]: "date", [COL_LIVRAISON]: "date", [COL_DATE_REGL]: "date",
+             [COL_MONTANT]: "number", [COL_REGLE]: "number",
+             [COL_FOURN]: "text", [COL_STATUT]: "text",
+             [COL_RELANCE]: "text", [COL_AUTRE]: "text" },
+    format: { [COL_MONTANT]: money, [COL_REGLE]: money },
+    labels: { range: t.range, matches: t.matches },
+  });
+
+  /* Deux filtres, une seule prédicat : setFilter remplace tout. */
+  let queryFilter = null;
+  let statut = "";
+  const applyFilters = () => grid.setFilter(row => {
+    if (queryFilter && !queryFilter(row)) return false;
+    if (statut && String(row[COL_STATUT] ?? "") !== statut) return false;
+    return true;
+  });
+
+  applyFilters();
+
+  SearchBox(document.getElementById("search"), {
+    placeholder: t.search,
+    onChange: f => { queryFilter = f; applyFilters(); },
+  });
+
+  const statutSel = document.getElementById("filtre-statut");
+  const fillStatuts = () => {
+    const values = columnValues(view.sheet(SHEET_ORDERS), COL_STATUT);
+    const current = statutSel.value;
+    statutSel.textContent = "";
+    statutSel.appendChild(new Option(t.allStatuses, ""));
+    values.forEach(v => statutSel.appendChild(new Option(v, v)));
+    statutSel.value = values.includes(current) ? current : "";
+  };
+  fillStatuts();
+  store.subscribe(fillStatuts);
+  statutSel.onchange = () => { statut = statutSel.value; applyFilters(); };
+
+  AddRow(document.getElementById("add-commande"), view, {
+    sheet: SHEET_ORDERS,
+    label: t.addOrder,
+    values: () => ({ [COL_STATUT]: "-", [COL_MONTANT]: 0, [COL_REGLE]: 0 }),
+  });
+
+  if (window.Chart) {
+    ChartBlock(document.getElementById("chart"), view, {
+      sheet: SHEET_ORDERS, x: COL_FOURN, y: COL_MONTANT,
+      type: "bar", aggregate: "sum", label: "Montant commandé",
+    });
+  } else {
+    document.getElementById("chart").remove();
+  }
+
+  /* ---------------- Prix ---------------- */
+  const gridPrix = DataGrid(document.getElementById("grid-prix"), view, {
+    sheet: SHEET_PRICES,
+    editable: true,
+    pageSize: 25,
+    types: { "Fournisseurs": "text", "Produits": "text", "Prix d'achat": "number",
+             "Frais de livraison": "number", "Marge (%)": "number" },
+    labels: { range: t.range, matches: t.matches },
+  });
+  document.getElementById("note-prix").textContent = t.formulaNote;
+  AddRow(document.getElementById("add-prix"), view, {
+    sheet: SHEET_PRICES, label: t.addPrice,
+    values: () => ({ "Prix d'achat": 0, "Frais de livraison": 0, "Marge (%)": 0 }),
+  });
+
+  /* ---------------- Paramètres ---------------- */
+  const params = view.sheet(SHEET_PARAMS);
+  const hint = col => (params.rows.find(r => isHint(r[col])) || {})[col] || "";
+
+  const produits = DataGrid(document.getElementById("grid-produits"), view, {
+    sheet: SHEET_PARAMS, columns: ["Produits"], editable: true, pageSize: 50,
+    labels: { range: t.range, matches: t.matches },
+  });
+  produits.setFilter(r => filled(r["Produits"]) && !isHint(r["Produits"]));
+  document.getElementById("note-produits").textContent = hint("Produits");
+
+  const fournisseurs = DataGrid(document.getElementById("grid-fournisseurs"), view, {
+    sheet: SHEET_PARAMS, columns: ["Fournisseurs"], editable: true, pageSize: 50,
+    labels: { range: t.range, matches: t.matches },
+  });
+  fournisseurs.setFilter(r => filled(r["Fournisseurs"]) && !isHint(r["Fournisseurs"]));
+  document.getElementById("note-fournisseurs").textContent = hint("Fournisseurs");
+
+  /* ---------------- Navigation ---------------- */
+  const views = {
+    [SHEET_ORDERS]: document.getElementById("view-commandes"),
+    [SHEET_PRICES]: document.getElementById("view-prix"),
+    [SHEET_PARAMS]: document.getElementById("view-parametres"),
+  };
+  const order = [SHEET_ORDERS, SHEET_PRICES, SHEET_PARAMS].filter(n => store.sheetNames().includes(n));
+  const show = name => Object.entries(views).forEach(([n, v]) => { v.hidden = n !== name; });
+  Tabs(document.getElementById("tabs"), order, { active: order[0], onSelect: show });
+  show(order[0]);
+}
+</script>
+</body>
+</html>

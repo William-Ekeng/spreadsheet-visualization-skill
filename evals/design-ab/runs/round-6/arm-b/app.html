@@ -1,0 +1,487 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Suivi des commandes</title>
+<link rel="stylesheet" href="base.css">
+<script src="sheetsync.js"></script>
+<script src="components.js"></script>
+<style>
+  /* Only tokens: no raw colors, no ad hoc type sizes. */
+  body { max-width: 1180px; margin: 0 auto; }
+  .app-head { align-items: center; }
+  .bar { align-items: center; }
+  .bar-search { flex: 0 1 280px; }
+  .bar-filter { flex: 0 0 170px; }
+  .bar-spacer { flex: 1 1 auto; min-width: 0; }
+  /* The order sheet's first column name carries a second line in the file
+     ("touche Ctrl + ;" ...). Shown as the file spells it, wrapped instead of
+     stretching the column to the width of a sentence. */
+  .ss-table th { white-space: pre-line; max-width: 190px; }
+  /* 44px : cible tactile, la seule commande ajoutée hors du kit. */
+  .check { display: flex; align-items: center; gap: calc(var(--ss-gap) / 2); flex: 0 0 auto; min-height: 44px; cursor: pointer; }
+  .check input { flex: 0 0 auto; }
+  .detail { flex: 0 0 340px; }
+  .detail:empty { display: none; }
+  .detail-head { display: flex; align-items: center; justify-content: space-between; gap: var(--ss-gap); margin-bottom: var(--ss-gap); }
+  .detail-head h2 { margin: 0; }
+  .form-static { color: var(--ss-muted); }
+  .msg-error { color: var(--ss-danger); }
+  .ref-list { margin: 0; padding-left: var(--ss-pad); }
+  @media (max-width: 820px) { .detail { flex: 1 1 100%; } }
+</style>
+</head>
+<body>
+
+<div class="ss-row app-head">
+  <div class="ss-grow">
+    <h1>Suivi des commandes</h1>
+    <p class="ss-muted" id="subtitle">Suivi_des_commandes.xlsx · chaque modification est enregistrée directement dans le fichier.</p>
+  </div>
+  <div class="ss-shrink" id="status"></div>
+</div>
+
+<div class="ss-stack">
+  <div id="tabs"></div>
+  <div id="views"></div>
+  <div id="config"></div>
+  <p class="ss-muted" id="limits"></p>
+</div>
+
+<script>
+/* ---------------------------------------------------------------- langue
+ * Le classeur est en français : toutes les chaînes de l'interface le sont
+ * aussi, y compris celles que le kit affiche par défaut en anglais. Les noms
+ * de colonnes restent tels quels dans le fichier (« Satut » compris).
+ */
+const t = {
+  connected: "connecté",
+  reconnecting: "reconnexion…",
+  close: "Fermer",
+  searchCommandes: "Rechercher une commande…",
+  searchPrix: "Rechercher un produit…",
+  allStatuses: "Tous les statuts",
+  hideEmpty: "Masquer les lignes vides",
+  addCommande: "+ Nouvelle commande",
+  addPrix: "+ Nouvelle ligne de prix",
+  range: (from, to, total) => `${from}–${to} sur ${total}`,
+  matches: n => (n === 0 ? "aucune ligne affichée" : `${n} ligne${n > 1 ? "s" : ""} affichée${n > 1 ? "s" : ""}`),
+  detailTitle: row => `Ligne ${row._row}`,
+  computed: "calculé par le fichier",
+  emptyCommandes: "Aucune commande enregistrée. Cliquez « + Nouvelle commande » pour en saisir une.",
+  emptyPrix: "Aucun prix enregistré. Cliquez « + Nouvelle ligne de prix » pour en saisir un.",
+  noteCommandes: "Cliquez une ligne pour ouvrir son détail à droite : dates, montants, statut et relance s'y modifient, et chaque champ est écrit dans le fichier dès qu'il est quitté.",
+  notePrix: "Cliquez une ligne pour modifier les prix à droite. Coût de revient et Prix de vente sont calculés par le fichier et restent en lecture seule.",
+  refIntro: "Ces listes alimentent les menus Fournisseurs et Produits des formulaires. Pour ajouter une entrée, insérez une ligne dans la feuille « Paramètres » du fichier.",
+  refTitle: "Listes de référence",
+  refSub: "feuille Paramètres",
+  limits: "Les colonnes calculées (Coût de revient, Prix de vente) s'affichent mais ne se modifient pas ici ; leur valeur se met à jour quand le fichier est recalculé dans Excel. Si le classeur est ouvert dans Excel, Windows le verrouille et les enregistrements échouent tant qu'il n'est pas fermé.",
+  writeFailed: "Enregistrement impossible. Si le fichier est ouvert dans Excel, fermez-le puis réessayez.",
+  empty: "(vide)",
+};
+
+/* Statuts : liste de validation du fichier (Commandes!P5:P7), hors plage
+ * servie par l'API, donc reprise ici telle quelle. */
+const STATUTS = ["-", "En cours", "Livré"];
+
+const SH_CMD = "Commandes", SH_PRIX = "Prix", SH_PARAM = "Paramètres";
+
+/* ----------------------------------------------------------- formatage */
+const eurFmt = new Intl.NumberFormat("fr-FR", { style: "currency", currency: "EUR" });
+const pctFmt = new Intl.NumberFormat("fr-FR", { style: "percent", maximumFractionDigits: 1 });
+const num = v => (v === null || v === undefined || v === "" ? null : (isFinite(Number(v)) ? Number(v) : null));
+const money = v => { const n = num(v); return n === null ? (v ?? "") : eurFmt.format(n); };
+const percent = v => { const n = num(v); return n === null ? (v ?? "") : pctFmt.format(n); };
+const dateStr = v => {
+  if (v === null || v === undefined || v === "") return "";
+  const d = new Date(v);
+  return isNaN(d) ? String(v) : d.toLocaleDateString("fr-FR");
+};
+
+/* Une ligne « vide » d'un classeur modèle : cellules réservées à 0, tiret de
+ * statut, et la ligne sentinelle de fin de bloc remplie de points. */
+const BLANKS = ["", "-", "."];
+const isBlank = v => v === null || v === undefined || BLANKS.includes(String(v).trim()) || Number(v) === 0;
+
+const store = new SheetStore();
+StatusDot(document.getElementById("status"), store, { labels: { connected: t.connected, reconnecting: t.reconnecting } });
+document.getElementById("limits").textContent = t.limits;
+
+/* store.saveCell / addRow ne vérifient pas la réponse HTTP : un échec
+ * d'écriture (fichier verrouillé par Excel) se perdrait en silence. La page
+ * écrit donc elle-même et lit le statut de la réponse. */
+async function saveCell(sheet, row, column, value) {
+  const res = await fetch("/api/cell", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ sheet, row, column, value }),
+  });
+  if (!res.ok) throw new Error("write failed");
+}
+async function addRow(sheet, values) {
+  const res = await fetch("/api/rows", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ sheet, values }),
+  });
+  if (!res.ok) throw new Error("write failed");
+  return (await res.json()).row;
+}
+
+/* components.js expose déjà un helper `el` global : celui-ci porte un autre
+ * nom pour ne pas l'écraser. */
+function node(tag, className, text) {
+  const n = document.createElement(tag);
+  if (className) n.className = className;
+  if (text !== undefined) n.textContent = text;
+  return n;
+}
+
+/* Valeurs d'une colonne de la feuille Paramètres, sans la consigne de
+ * maintenance que le fichier range au bas de chaque liste. */
+function paramValues(column) {
+  return store.sheet(SH_PARAM).rows
+    .map(r => r[column])
+    .filter(v => v !== null && v !== undefined && String(v).trim() !== "" && !String(v).startsWith("Pour ajouter"))
+    .map(String);
+}
+
+let built = false;
+store.subscribe(() => {
+  if (built || !store.sheetNames().length) return;
+  built = true;
+  build();
+});
+store.start();
+
+/* Pas de graphique ici : le classeur est un modèle vierge, tous les montants
+ * valent 0 et toutes les dates sont vides, et les lignes réservées du modèle
+ * deviendraient des catégories fantômes sur l'axe. Les trois tuiles portent
+ * les agrégats et se recalculent au fil de la saisie ; un graphique se
+ * justifiera quand la feuille contiendra des commandes. */
+function build() {
+  const cmdHeaders = store.sheet(SH_CMD).headers;
+  const C_DATE = cmdHeaders[0];            // nom de colonne long, repris du fichier
+  const C_FOURN = "Fournisseurs", C_MONTANT = "Montant", C_LIVRAISON = "Date de livraison";
+  const C_REGLE = "Montant réglé", C_DATE_REGLE = "Date de règlement";
+  const C_AUTRE = "Autre critère à définir", C_STATUT = "Satut", C_RELANCE = "Livraison à relancer ?";
+
+  const viewsEl = document.getElementById("views");
+
+  const commandes = ledger(viewsEl, {
+    sheet: SH_CMD,
+    searchPlaceholder: t.searchCommandes,
+    searchColumns: [C_FOURN, C_AUTRE, C_STATUT, C_RELANCE],
+    statusColumn: C_STATUT,
+    statusOptions: STATUTS,
+    addLabel: t.addCommande,
+    addSeed: { [C_STATUT]: "-", [C_MONTANT]: 0, [C_REGLE]: 0 },
+    emptyText: t.emptyCommandes,
+    note: t.noteCommandes,
+    format: {
+      [C_DATE]: dateStr, [C_LIVRAISON]: dateStr, [C_DATE_REGLE]: dateStr,
+      [C_MONTANT]: money, [C_REGLE]: money,
+    },
+    fields: [
+      { col: C_DATE, label: "Date Commande", type: "date" },
+      { col: C_FOURN, type: "select", options: () => paramValues("Produits") },
+      { col: C_MONTANT, type: "number" },
+      { col: C_LIVRAISON, type: "date" },
+      { col: C_REGLE, type: "number" },
+      { col: C_DATE_REGLE, type: "date" },
+      { col: C_STATUT, type: "select", options: () => STATUTS },
+      { col: C_RELANCE, type: "text" },
+      { col: C_AUTRE, type: "text" },
+    ],
+    tiles: [
+      { label: "Commandes enregistrées", compute: rows => rows.filter(r => !rowIsBlank(r, cmdHeaders)).length },
+      { label: "Montant commandé", compute: agg.sum(C_MONTANT), format: money },
+      { label: "Reste à régler", compute: rows => agg.sum(C_MONTANT)(rows) - agg.sum(C_REGLE)(rows), format: money },
+    ],
+  });
+
+  const prixHeaders = store.sheet(SH_PRIX).headers;
+  const prix = ledger(viewsEl, {
+    sheet: SH_PRIX,
+    searchPlaceholder: t.searchPrix,
+    searchColumns: ["Fournisseurs", "Produits"],
+    addLabel: t.addPrix,
+    addSeed: { "Prix d'achat": 0, "Frais de livraison": 0, "Marge (%)": 0 },
+    emptyText: t.emptyPrix,
+    note: t.notePrix,
+    format: {
+      "Prix d'achat": money, "Frais de livraison": money,
+      "Coût de revient": money, "Prix de vente": money, "Marge (%)": percent,
+    },
+    fields: [
+      { col: "Fournisseurs", type: "select", options: () => paramValues("Fournisseurs") },
+      { col: "Produits", type: "select", options: () => paramValues("Produits") },
+      { col: "Prix d'achat", type: "number" },
+      { col: "Frais de livraison", type: "number" },
+      { col: "Coût de revient", type: "number", format: money },
+      { col: "Marge (%)", type: "number" },
+      { col: "Prix de vente", type: "number", format: money },
+    ],
+    tiles: [],
+    headers: prixHeaders,
+  });
+
+  const views = { [SH_CMD]: commandes, [SH_PRIX]: prix };
+  Tabs(document.getElementById("tabs"), [SH_CMD, SH_PRIX], {
+    onSelect: name => {
+      Object.entries(views).forEach(([k, v]) => { v.el.hidden = k !== name; });
+    },
+  });
+  prix.el.hidden = true;
+
+  referencePanel(document.getElementById("config"));
+}
+
+function rowIsBlank(row, headers) {
+  return headers.every(h => isBlank(row[h]));
+}
+
+/* Un « registre » : barre de contrôle + tableau en lecture seule + panneau de
+ * détail à droite. Les montants et les dates sont formatés dans le tableau,
+ * donc ils ne sont pas éditables en cellule (une cellule quittée sans
+ * modification y réécrirait « 0,00 € ») : toute la saisie passe par le
+ * panneau, avec de vrais champs date et nombre. */
+function ledger(container, cfg) {
+  const root = node("div", "ss-stack");
+  const headers = cfg.headers || store.sheet(cfg.sheet).headers;
+  const added = new Set();   // lignes créées ici : visibles même si encore vides
+
+  if (cfg.tiles.length) {
+    const tilesRow = node("div", "ss-row");
+    cfg.tiles.forEach(spec => StatTile(tilesRow, store, {
+      sheet: cfg.sheet, label: spec.label, compute: spec.compute, format: spec.format,
+    }));
+    root.appendChild(tilesRow);
+  }
+
+  const body = node("div", "ss-row");
+  const left = node("div", "ss-col ss-grow");
+  const panel = node("div", "ss-panel");
+  const detail = node("div", "detail");
+  body.append(left, detail);
+  left.appendChild(panel);
+  root.appendChild(body);
+
+  /* Barre de contrôle : une seule rangée, dans le même panneau que le
+     tableau qu'elle pilote. */
+  const bar = node("div", "ss-row bar");
+  panel.appendChild(bar);
+
+  const searchWrap = node("div", "bar-search");
+  bar.appendChild(searchWrap);
+
+  let statusValue = "";
+  if (cfg.statusColumn) {
+    const filterWrap = node("div", "bar-filter");
+    const sel = node("select", "ss-input");
+    sel.id = `filter-${cfg.sheet}`;
+    sel.appendChild(new Option(t.allStatuses, ""));
+    cfg.statusOptions.forEach(v => sel.appendChild(new Option(v, v)));
+    // Le libellé de la colonne (« Satut ») est déjà lisible dans l'option par
+    // défaut ; il reste accessible pour les lecteurs d'écran.
+    sel.setAttribute("aria-label", `Filtrer par ${cfg.statusColumn}`);
+    sel.addEventListener("change", () => { statusValue = sel.value; applyFilters(); });
+    filterWrap.appendChild(sel);
+    bar.appendChild(filterWrap);
+  }
+
+  const checkLabel = node("label", "check");
+  const check = document.createElement("input");
+  check.type = "checkbox";
+  check.className = "ss-input";
+  check.checked = true;
+  check.id = `hide-empty-${cfg.sheet}`;
+  checkLabel.htmlFor = check.id;
+  checkLabel.append(check, node("span", "", t.hideEmpty));
+  check.addEventListener("change", applyFilters);
+  bar.appendChild(checkLabel);
+
+  bar.appendChild(node("div", "bar-spacer"));
+
+  const addWrap = node("div", "ss-shrink");
+  bar.appendChild(addWrap);
+  const addBtn = node("button", "ss-btn ss-btn-primary", cfg.addLabel);
+  addWrap.appendChild(addBtn);
+  addBtn.addEventListener("click", async () => {
+    const payload = {};
+    headers.forEach(h => { payload[h] = ""; });
+    Object.assign(payload, cfg.addSeed);
+    addBtn.disabled = true;
+    try {
+      const row = await addRow(cfg.sheet, payload);
+      added.add(row);
+      await store.refresh();
+      applyFilters();
+      openDetail(row);
+    } catch {
+      showMessage(t.writeFailed);
+    } finally {
+      addBtn.disabled = false;
+    }
+  });
+
+  const grid = DataGrid(panel, store, {
+    sheet: cfg.sheet,
+    editable: false,
+    format: cfg.format,
+    onRowClick: row => openDetail(row._row),
+    labels: { range: t.range, matches: t.matches },
+  });
+
+  const emptyNote = node("p", "ss-muted", cfg.emptyText);
+  panel.appendChild(emptyNote);
+  panel.appendChild(node("p", "ss-muted", cfg.note));
+
+  const message = node("p", "ss-muted msg-error");
+  message.setAttribute("role", "status");
+  message.hidden = true;
+  panel.appendChild(message);
+  let messageTimer = null;
+  function showMessage(text) {
+    message.textContent = text;
+    message.hidden = false;
+    clearTimeout(messageTimer);
+    messageTimer = setTimeout(() => { message.hidden = true; }, 8000);
+  }
+
+  let searchPredicate = null;
+  SearchBox(searchWrap, {
+    placeholder: cfg.searchPlaceholder,
+    columns: cfg.searchColumns,
+    onChange: fn => { searchPredicate = fn; applyFilters(); },
+  });
+
+  function keep(row) {
+    if (check.checked && rowIsBlank(row, headers) && !added.has(row._row)) return false;
+    if (statusValue && String(row[cfg.statusColumn] ?? "") !== statusValue) return false;
+    if (searchPredicate && !searchPredicate(row)) return false;
+    return true;
+  }
+
+  function applyFilters() {
+    grid.setFilter(keep);
+    emptyNote.hidden = store.sheet(cfg.sheet).rows.some(keep);
+  }
+  applyFilters();
+  store.subscribe(() => { emptyNote.hidden = store.sheet(cfg.sheet).rows.some(keep); });
+
+  /* Le détail s'ouvre à côté du tableau : sous le tableau, le clic semblerait
+     sans effet, la réponse tombant hors de l'écran. */
+  function openDetail(rowNum) {
+    const data = store.sheet(cfg.sheet);
+    const row = data.rows.find(r => r._row === rowNum);
+    detail.textContent = "";
+    if (!row) return;
+
+    const card = node("div", "ss-panel");
+    const head = node("div", "detail-head");
+    head.appendChild(node("h2", "", t.detailTitle(row)));
+    const closeBtn = node("button", "ss-btn ss-btn-ghost", t.close);
+    closeBtn.addEventListener("click", () => { detail.textContent = ""; });
+    head.appendChild(closeBtn);
+    card.appendChild(head);
+
+    const form = node("div", "ss-form");
+    card.appendChild(form);
+
+    const err = node("p", "ss-muted msg-error");
+    err.setAttribute("role", "status");
+    err.hidden = true;
+    card.appendChild(err);
+
+    cfg.fields.forEach((field, i) => {
+      const wrap = node("div", "ss-form-field");
+      const labelText = field.label || field.col;
+      const isFormula = store.isFormulaCell(cfg.sheet, row._row, field.col);
+      if (isFormula) {
+        const lab = node("div", "ss-form-label", `${labelText} · ${t.computed}`);
+        const val = node("div", "form-static", (field.format || String)(row[field.col]) || t.empty);
+        val.title = data.formulas[`${row._row}:${field.col}`] || "";
+        wrap.append(lab, val);
+        form.appendChild(wrap);
+        return;
+      }
+      const lab = node("label", "ss-form-label", labelText);
+      wrap.appendChild(lab);
+      let options = [];
+      if (field.type === "select") {
+        options = field.options();
+        const current = row[field.col] === null || row[field.col] === undefined ? "" : String(row[field.col]);
+        if (current && !options.includes(current)) options = [current, ...options];
+        options = ["", ...options];
+      }
+      const input = FieldInput(wrap, {
+        type: field.type,
+        value: row[field.col],
+        options,
+        onChange: async raw => {
+          if (String(raw) === String(row[field.col] ?? "")) return;
+          // Un nombre part comme nombre : écrit en texte, il casserait les
+          // sommes et les formules du classeur. Les dates partent en ISO.
+          const value = field.type === "number" && raw !== "" ? Number(raw) : raw;
+          const previous = row[field.col];
+          row[field.col] = value;
+          try {
+            await saveCell(cfg.sheet, row._row, field.col, value);
+            err.hidden = true;
+          } catch {
+            row[field.col] = previous;
+            err.textContent = t.writeFailed;
+            err.hidden = false;
+          }
+        },
+      });
+      input.el.id = `f-${cfg.sheet}-${row._row}-${i}`;
+      lab.htmlFor = input.el.id;
+      form.appendChild(wrap);
+    });
+
+    detail.appendChild(card);
+  }
+
+  container.appendChild(root);
+  return { el: root, refresh: applyFilters };
+}
+
+/* Les listes de la feuille Paramètres ne sont pas du même rang que les
+ * registres : elles alimentent les menus déroulants. Panneau repliable,
+ * fermé par défaut, en lecture : le fichier demande d'insérer une ligne dans
+ * la feuille elle-même, ce que cette page ne peut pas faire à sa place. */
+function referencePanel(container) {
+  const collapse = Collapsible(container, {
+    title: t.refTitle,
+    subtitle: t.refSub,
+    open: false,
+    content: bodyEl => renderLists(bodyEl),
+  });
+  store.subscribe(() => renderLists(collapse.body));
+
+  function renderLists(bodyEl) {
+    bodyEl.textContent = "";
+    const row = node("div", "ss-row");
+    [["Produits", "Produits"], ["Fournisseurs", "Fournisseurs"]].forEach(([title, col]) => {
+      const box = node("div", "");
+      box.appendChild(node("h2", "", title));
+      const values = paramValues(col);
+      if (!values.length) {
+        box.appendChild(node("p", "ss-muted", t.empty));
+      } else {
+        const list = node("ul", "ref-list");
+        values.forEach(v => list.appendChild(node("li", "", v)));
+        box.appendChild(list);
+      }
+      row.appendChild(box);
+    });
+    bodyEl.appendChild(row);
+    bodyEl.appendChild(node("p", "ss-muted", t.refIntro));
+  }
+}
+</script>
+</body>
+</html>

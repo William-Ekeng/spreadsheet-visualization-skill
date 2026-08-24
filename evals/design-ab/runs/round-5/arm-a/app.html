@@ -1,0 +1,273 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Suivi des commandes</title>
+<link rel="stylesheet" href="base.css">
+<script src="sheetsync.js"></script>
+<script src="components.js"></script>
+<style>
+  .app-head { align-items: flex-start; margin-bottom: 20px; }
+  .app-head h1 { margin: 0; }
+  .app-sub { color: var(--ss-muted); margin-top: 4px; }
+  .tiles { margin-bottom: 20px; }
+  .tiles .ss-tile { flex: 1 1 160px; }
+  .pane[hidden] { display: none; }
+  .toolbar { align-items: center; gap: 10px; margin-bottom: 12px; }
+  .toolbar .ss-search-wrap { flex: 1 1 260px; max-width: 340px; }
+  .work { align-items: flex-start; gap: 16px; }
+  .detail { flex: 0 0 320px; }
+  .detail-head { align-items: center; justify-content: space-between; margin-bottom: 12px; }
+  .detail-head strong { font-family: var(--ss-font-display); }
+  /* The order-date column carries a long parenthetical hint in its own
+     header text; let that one header wrap instead of stretching the table. */
+  #grid-commandes .ss-table th:first-child { white-space: normal; min-width: 180px; }
+  .ref-lists { gap: 16px; align-items: flex-start; }
+  .ref-lists > div { flex: 1 1 240px; }
+  .ref-lists h3 { margin: 0 0 10px; }
+  .ref-lists ul { margin: 0; padding-left: 18px; }
+  .ref-lists li { margin-bottom: 4px; }
+  .note { color: var(--ss-muted); font-size: 13px; margin-top: 10px; }
+</style>
+</head>
+<body>
+
+<div class="ss-row app-head">
+  <div class="ss-grow">
+    <h1>Suivi des commandes</h1>
+    <div class="app-sub">Commandes fournisseurs, règlements et prix de vente. Le classeur Excel reste la source de vérité.</div>
+  </div>
+  <div class="ss-shrink" id="status"></div>
+</div>
+
+<div class="ss-row tiles" id="tiles"></div>
+
+<div id="tabs" style="margin-bottom:16px;"></div>
+
+<!-- Commandes -->
+<section class="pane" id="pane-commandes">
+  <div class="ss-row work">
+    <div class="ss-panel ss-grow">
+      <div class="ss-row toolbar">
+        <div id="search"></div>
+        <select class="ss-input ss-shrink" id="filtre-statut" style="max-width:200px;"></select>
+      </div>
+      <div id="grid-commandes"></div>
+    </div>
+    <div class="ss-panel detail" id="detail" hidden></div>
+  </div>
+  <div class="note">Cliquez sur une ligne pour ouvrir la fiche complète, ou modifiez directement dans le tableau. Toute modification est enregistrée dans le fichier Excel.</div>
+</section>
+
+<!-- Prix -->
+<section class="pane" id="pane-prix" hidden>
+  <div class="ss-panel">
+    <div id="grid-prix"></div>
+  </div>
+  <div class="note">« Coût de revient » et « Prix de vente » sont calculés par le classeur : ils s'affichent en lecture seule et se mettent à jour au prochain enregistrement du fichier dans Excel.</div>
+</section>
+
+<!-- Paramètres -->
+<section class="pane" id="pane-parametres" hidden>
+  <div class="ss-row ref-lists" id="ref-lists"></div>
+  <div class="note">Listes de référence du classeur (feuille « Paramètres »). Pour ajouter un produit ou un fournisseur, insérez une ligne dans la liste correspondante dans Excel.</div>
+</section>
+
+<script>
+/* Toutes les chaînes de l'interface en français, au même endroit.
+   Les noms de colonnes viennent du fichier et restent tels quels. */
+const t = {
+  connecte: "connecté",
+  reconnexion: "reconnexion…",
+  rechercher: "Rechercher une commande…",
+  tousStatuts: "Tous les statuts",
+  ajouterCommande: "+ Nouvelle commande",
+  ajouterPrix: "+ Nouvelle ligne de prix",
+  plage: (a, b, n) => `${a}–${b} sur ${n}`,
+  resultats: n => `${n} résultat${n === 1 ? "" : "s"}`,
+  fiche: "Fiche commande",
+  fermer: "Fermer",
+  produits: "Produits",
+  fournisseurs: "Fournisseurs",
+};
+
+const SHEET_CMD = "Commandes";
+const SHEET_PRIX = "Prix";
+const SHEET_PARAM = "Paramètres";
+
+/* Colonnes réelles : le classeur est un modèle qui déclare des milliers de
+   colonnes, d'où les colN fantômes renvoyés par le serveur. */
+const COL_DATE = 'Date Commande\n(touche Ctrl + ";" pour inscrire la date facilement)';
+const COLS_CMD = [COL_DATE, "Fournisseurs", "Montant", "Date de livraison",
+                  "Montant réglé", "Date de règlement", "Autre critère à définir",
+                  "Satut", "Livraison à relancer ?"];
+const COLS_PRIX = ["Fournisseurs", "Produits", "Prix d'achat", "Frais de livraison",
+                   "Coût de revient", "Marge (%)", "Prix de vente"];
+
+const euro = new Intl.NumberFormat("fr-FR", { style: "currency", currency: "EUR" });
+const store = new SheetStore();
+
+StatusDot(document.getElementById("status"), store, {
+  labels: { connected: t.connecte, reconnecting: t.reconnexion },
+});
+
+/* --- Indicateurs : ce qu'un gérant regarde en premier --- */
+const tiles = document.getElementById("tiles");
+const sum = col => rows => rows.reduce((a, r) => a + (Number(r[col]) || 0), 0);
+StatTile(tiles, store, { label: "Total commandé", sheet: SHEET_CMD,
+  compute: sum("Montant"), format: euro.format });
+StatTile(tiles, store, { label: "Total réglé", sheet: SHEET_CMD,
+  compute: sum("Montant réglé"), format: euro.format });
+StatTile(tiles, store, { label: "Reste à régler", sheet: SHEET_CMD,
+  compute: rows => sum("Montant")(rows) - sum("Montant réglé")(rows), format: euro.format });
+StatTile(tiles, store, { label: "Livraisons à relancer", sheet: SHEET_CMD,
+  compute: rows => rows.filter(r => String(r["Livraison à relancer ?"] ?? "").trim() !== "").length });
+
+/* --- Commandes : rechercher, filtrer, corriger --- */
+const detailEl = document.getElementById("detail");
+
+const gridCmd = DataGrid(document.getElementById("grid-commandes"), store, {
+  sheet: SHEET_CMD,
+  columns: COLS_CMD,
+  editable: true,
+  addable: true,
+  deletable: true,
+  pageSize: 50,
+  types: {
+    [COL_DATE]: "date",
+    "Date de livraison": "date",
+    "Date de règlement": "date",
+    "Montant": "number",
+    "Montant réglé": "number",
+    "Fournisseurs": "select",
+    "Satut": "select",
+  },
+  format: {
+    "Montant": v => (v === null || v === "" ? "" : euro.format(Number(v) || 0)),
+    "Montant réglé": v => (v === null || v === "" ? "" : euro.format(Number(v) || 0)),
+  },
+  labels: { add: t.ajouterCommande, range: t.plage, matches: t.resultats },
+  onRowClick: row => ouvrirFiche(row),
+});
+
+function ouvrirFiche(row) {
+  detailEl.textContent = "";
+  detailEl.hidden = false;
+  const head = document.createElement("div");
+  head.className = "ss-row detail-head";
+  const titre = document.createElement("strong");
+  titre.textContent = t.fiche;
+  const fermer = document.createElement("button");
+  fermer.className = "ss-btn";
+  fermer.textContent = t.fermer;
+  fermer.onclick = () => { detailEl.hidden = true; detailEl.textContent = ""; };
+  head.append(titre, fermer);
+  detailEl.appendChild(head);
+  RecordForm(detailEl, store, {
+    sheet: SHEET_CMD,
+    row,
+    columns: COLS_CMD,
+    types: {
+      [COL_DATE]: "date",
+      "Date de livraison": "date",
+      "Date de règlement": "date",
+      "Montant": "number",
+      "Montant réglé": "number",
+      "Fournisseurs": "select",
+      "Satut": "select",
+    },
+  });
+}
+
+/* Recherche et filtre statut partagent une seule fonction de filtrage :
+   setFilter remplace tout le prédicat. */
+let recherche = null;
+let statut = "";
+function appliquerFiltre() {
+  if (!recherche && !statut) { gridCmd.setFilter(null); return; }
+  gridCmd.setFilter(row =>
+    (!recherche || recherche(row)) &&
+    (!statut || String(row["Satut"] ?? "") === statut));
+}
+
+SearchBox(document.getElementById("search"), {
+  placeholder: t.rechercher,
+  columns: COLS_CMD,
+  onChange: f => { recherche = f; appliquerFiltre(); },
+});
+
+const selStatut = document.getElementById("filtre-statut");
+selStatut.onchange = () => { statut = selStatut.value; appliquerFiltre(); };
+function remplirStatuts() {
+  const data = store.sheet(SHEET_CMD);
+  if (!data.rows.length) return;
+  const valeurs = columnValues(data, "Satut");
+  const courant = selStatut.value;
+  if (selStatut.options.length === valeurs.length + 1) return;
+  selStatut.textContent = "";
+  selStatut.appendChild(new Option(t.tousStatuts, ""));
+  valeurs.forEach(v => selStatut.appendChild(new Option(v, v)));
+  selStatut.value = courant;
+}
+
+/* --- Prix : les deux colonnes calculées passent en lecture seule toutes seules --- */
+DataGrid(document.getElementById("grid-prix"), store, {
+  sheet: SHEET_PRIX,
+  columns: COLS_PRIX,
+  editable: true,
+  addable: true,
+  deletable: true,
+  pageSize: 50,
+  types: {
+    "Produits": "select",
+    "Prix d'achat": "number",
+    "Frais de livraison": "number",
+    "Marge (%)": "number",
+  },
+  labels: { add: t.ajouterPrix, range: t.plage, matches: t.resultats },
+});
+
+/* --- Paramètres : listes de référence, sans en-têtes exploitables --- */
+const refEl = document.getElementById("ref-lists");
+function rendreParametres() {
+  const data = store.sheet(SHEET_PARAM);
+  if (!data.rows.length) return;
+  const liste = col => data.rows
+    .map(r => r[col])
+    .filter(v => v !== null && v !== "" && !String(v).startsWith("Pour ajouter") && String(v) !== t.produits && String(v) !== t.fournisseurs);
+  refEl.textContent = "";
+  [[t.produits, liste("col0")], [t.fournisseurs, liste("col5")]].forEach(([titre, valeurs]) => {
+    const bloc = document.createElement("div");
+    bloc.className = "ss-panel";
+    const h = document.createElement("h3");
+    h.textContent = titre;
+    const ul = document.createElement("ul");
+    valeurs.forEach(v => {
+      const li = document.createElement("li");
+      li.textContent = String(v);
+      ul.appendChild(li);
+    });
+    bloc.append(h, ul);
+    refEl.appendChild(bloc);
+  });
+}
+
+/* --- Navigation --- */
+const panes = {
+  [SHEET_CMD]: document.getElementById("pane-commandes"),
+  [SHEET_PRIX]: document.getElementById("pane-prix"),
+  [SHEET_PARAM]: document.getElementById("pane-parametres"),
+};
+Tabs(document.getElementById("tabs"), [SHEET_CMD, SHEET_PRIX, SHEET_PARAM], {
+  active: SHEET_CMD,
+  onSelect: nom => {
+    Object.entries(panes).forEach(([k, el]) => el.hidden = k !== nom);
+  },
+});
+
+store.subscribe(() => { remplirStatuts(); rendreParametres(); });
+store.start();
+</script>
+</body>
+</html>

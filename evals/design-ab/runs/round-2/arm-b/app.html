@@ -1,0 +1,409 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Suivi des commandes</title>
+<link rel="stylesheet" href="base.css">
+<script src="sheetsync.js"></script>
+<script src="components.js"></script>
+<style>
+  /* Layout only. Every color, font, radius and spacing value stays on the
+     --ss-* token contract from base.css. */
+
+  .page { max-width: 1200px; margin: 0 auto; }
+  .page-head { align-items: center; }
+
+  /* The kit's .ss-row stretches children evenly, which would blow three
+     tiles up to 390px each. Cap them so they stay cards around a number. */
+  .tile-row > * { flex: 0 1 220px; }
+
+  /* Control-bar sizing (search 240-320px, filter 120-200px). Without a cap
+     the bar degenerates into full-width bands. Bottom-aligned so the search
+     input and the labelled select share one baseline. */
+  .control-bar { align-items: flex-end; }
+  .control-search { flex: 0 0 280px; }
+  .control-filter { flex: 0 0 200px; }
+  .control-action { margin-left: auto; }
+
+  /* One workbook header is a full sentence with a line break in it
+     ("Date Commande (touche Ctrl + ";" ...)"). The kit's th is nowrap,
+     which would force a horizontal scroll for that one label; let headers
+     wrap instead. */
+  .ss-table th { white-space: normal; }
+
+  /* The record editor is a single column of fields: full page width would
+     stretch nine inputs across 1200px. */
+  .detail { max-width: 420px; }
+
+  /* Rows that open a record are reachable by keyboard (see keyboardRows),
+     so they need the focus state the kit only gives to hover. */
+  .ss-table tr.clickable:focus-visible {
+    outline: var(--ss-border-w) solid var(--ss-accent);
+    outline-offset: calc(-1 * var(--ss-border-w));
+  }
+  .ss-table tr.clickable:focus-visible td { background: var(--ss-accent-bg); }
+
+  .ref-list { list-style: none; margin: 0; padding: 0; }
+</style>
+</head>
+<body>
+
+<div class="page ss-stack">
+
+  <div class="ss-row page-head">
+    <h1 class="ss-shrink">Suivi des commandes</h1>
+    <div class="ss-shrink" id="status"></div>
+  </div>
+
+  <div id="tabs"></div>
+
+  <!-- Orders: the app's purpose, so it loads first. -->
+  <section id="view-orders" class="ss-stack">
+    <div class="ss-row tile-row" id="tiles"></div>
+    <div class="ss-panel ss-stack">
+      <div class="ss-row control-bar" id="orders-controls"></div>
+      <div id="orders-grid"><p class="ss-muted">Loading…</p></div>
+    </div>
+    <div id="orders-detail" class="detail"></div>
+  </section>
+
+  <!-- Prices -->
+  <section id="view-prices" class="ss-stack" hidden>
+    <div class="ss-panel">
+      <div id="prices-grid"><p class="ss-muted">Loading…</p></div>
+    </div>
+    <div id="prices-detail" class="detail"></div>
+  </section>
+
+  <!-- Reference lists that feed the two sheets above. The .ss-row sits
+       inside the section rather than on it: display:flex would outrank the
+       [hidden] attribute and the view would never hide. -->
+  <section id="view-params" hidden>
+    <div class="ss-row">
+      <div class="ss-panel" id="params-a"></div>
+      <div class="ss-panel" id="params-b"></div>
+    </div>
+  </section>
+
+</div>
+
+<script>
+const store = new SheetStore();
+StatusDot(document.getElementById("status"), store);
+
+/* ---------------------------------------------------------------- helpers */
+
+/* The workbook is a template: both data sheets declare far more columns
+   than they use, and the spare ones carry the source values of the Excel
+   dropdowns. The server reports them as col9, col12, ... Trim them so the
+   grid, the form and the search only ever see the real table. */
+const realCols = data => data.headers.filter(h => !/^col\d+$/.test(h));
+
+/* Resolve a column by its name in the file, with a positional fallback so a
+   renamed header degrades instead of silently formatting the wrong column.
+   Names are kept exactly as the workbook spells them, typos included
+   ("Satut"). */
+const pick = (cols, name, idx) => (cols.includes(name) ? name : cols[idx]);
+
+const num = v => (v === null || v === undefined || v === "" ? null : Number(v));
+const eur = v => {
+  const n = num(v);
+  if (n === null) return "";
+  if (isNaN(n)) return String(v);
+  return n.toLocaleString("fr-FR", { style: "currency", currency: "EUR" });
+};
+const pct = v => {
+  const n = num(v);
+  if (n === null) return "";
+  if (isNaN(n)) return String(v);
+  return n.toLocaleString("fr-FR", { style: "percent", minimumFractionDigits: 2 });
+};
+/* Date fields write ISO (the picker's format); the grid shows them the way
+   the sheet does. Anything unparseable is shown as it is stored. */
+const dateFr = v => {
+  if (v === null || v === undefined || v === "") return "";
+  const d = new Date(v);
+  return isNaN(d) ? String(v) : d.toLocaleDateString("fr-FR");
+};
+
+const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+/* Grids display formatted money, so they are not inline-editable: an
+   editable cell writes its own rendered text back to the file on blur,
+   which would save "0,00 €" into a numeric cell. Rows open in a RecordForm
+   instead, which is also what nine columns want (editing inside a
+   horizontally scrolling table is clumsy). */
+function openRecord(host, sheet, row, columns, types) {
+  host.textContent = "";
+  const head = document.createElement("div");
+  head.className = "ss-row page-head";
+  const title = document.createElement("h2");
+  title.className = "ss-shrink";
+  title.textContent = "Edit record";
+  const close = document.createElement("button");
+  close.className = "ss-btn ss-shrink";
+  close.textContent = "Close";
+  close.onclick = () => { host.textContent = ""; };
+  head.append(title, close);
+  host.appendChild(head);
+  RecordForm(host, store, { sheet, row, columns, types });
+  host.scrollIntoView({ behavior: reduceMotion ? "auto" : "smooth", block: "nearest" });
+}
+
+/* DataGrid opens a record on a row click, which leaves the editor
+   unreachable without a mouse: the whole app's editing lives behind that
+   gesture. Rows get a tab stop and Enter here instead. The grid rebuilds
+   its tbody on every render (a poll, a sort, a filter), and only some of
+   those go through the store, so the observer re-applies it rather than a
+   subscription. Enter is forwarded to a cell because the grid's own
+   handler ignores clicks whose target is the row itself. */
+function keyboardRows(grid) {
+  const table = grid.el.querySelector("table");
+  const apply = () => table.querySelectorAll("tbody tr.clickable").forEach(tr => {
+    if (tr.tabIndex === 0) return;
+    tr.tabIndex = 0;
+    tr.addEventListener("keydown", e => {
+      if (e.key !== "Enter" && e.key !== " ") return;
+      if (e.target !== tr) return;           // let controls inside the row keep their keys
+      e.preventDefault();
+      tr.querySelector("td").click();
+    });
+  });
+  apply();
+  new MutationObserver(apply).observe(table, { childList: true, subtree: true });
+}
+
+/* ------------------------------------------------------------------ build
+ * Sheet headers are unknown until the first payload lands, and the column
+ * lists above depend on them, so the blocks are built once on first data
+ * rather than at t=0. */
+let built = false;
+store.subscribe(() => {
+  if (built || !store.sheetNames().length) return;
+  built = true;
+  build();
+});
+
+function build() {
+  const names = store.sheetNames();
+  const S_ORDERS = "Commandes";
+  const S_PRICES = "Prix";
+  const S_PARAMS = names.find(n => n.startsWith("Param"));
+
+  /* ---- Orders ---- */
+  const oCols = realCols(store.sheet(S_ORDERS));
+  const O = {
+    ordered: oCols[0],   // the order-date header is a whole sentence; taken by position
+    supplier: pick(oCols, "Fournisseurs", 1),
+    amount: pick(oCols, "Montant", 2),
+    delivered: pick(oCols, "Date de livraison", 3),
+    paid: pick(oCols, "Montant réglé", 4),
+    settled: pick(oCols, "Date de règlement", 5),
+    other: pick(oCols, "Autre critère à définir", 6),
+    status: pick(oCols, "Satut", 7),
+    chase: pick(oCols, "Livraison à relancer ?", 8),
+  };
+  /* Types are declared rather than inferred. The sheet is an unused
+     template whose last row (file row 2026) holds a "." in every column, so
+     inferFieldType sees {".", 0} and offers a two-option picklist where a
+     money field belongs. These follow the number formats the workbook
+     itself gives the columns. */
+  const oTypes = {
+    [O.ordered]: "date", [O.supplier]: "text", [O.amount]: "number",
+    [O.delivered]: "date", [O.paid]: "number", [O.settled]: "date",
+    [O.other]: "text", [O.status]: "text", [O.chase]: "text",
+  };
+
+  /* Three money numbers, in the workbook's own vocabulary. The third is the
+     one the sheet never states: what is still owed. */
+  const tiles = document.getElementById("tiles");
+  StatTile(tiles, store, { label: "Montant commandé", sheet: S_ORDERS, compute: agg.sum(O.amount), format: eur });
+  StatTile(tiles, store, { label: "Montant réglé", sheet: S_ORDERS, compute: agg.sum(O.paid), format: eur });
+  StatTile(tiles, store, {
+    label: "Reste à régler", sheet: S_ORDERS,
+    compute: rows => agg.sum(O.amount)(rows) - agg.sum(O.paid)(rows), format: eur,
+  });
+
+  const ordersGrid = document.getElementById("orders-grid");
+  ordersGrid.textContent = "";
+  const grid = DataGrid(ordersGrid, store, {
+    sheet: S_ORDERS,
+    columns: oCols,
+    editable: false,
+    /* The kit's own Add row button appends a row of empty strings, which
+       openpyxl stores as blank cells and the server then skips as
+       value-less: on this workbook it looks like nothing happened. The
+       control bar carries an Add order button instead. */
+    addable: false,
+    deletable: true,
+    format: {
+      [O.amount]: eur, [O.paid]: eur,
+      [O.ordered]: dateFr, [O.delivered]: dateFr, [O.settled]: dateFr,
+    },
+    onRowClick: row => openRecord(document.getElementById("orders-detail"), S_ORDERS, row, oCols, oTypes),
+  });
+  keyboardRows(grid);
+
+  /* One control bar for one data region: search, then the supplier filter.
+     setFilter replaces the whole predicate, so both feed one combined
+     function instead of overwriting each other. */
+  const controls = document.getElementById("orders-controls");
+  let searchPred = null, supplier = "";
+  const apply = () => grid.setFilter(!searchPred && !supplier ? null : row => {
+    if (searchPred && !searchPred(row)) return false;
+    if (supplier && String(row[O.supplier] ?? "") !== supplier) return false;
+    return true;
+  });
+
+  /* The search box carries its own icon and placeholder, so it takes an
+     aria-label rather than a visible one; the filter next to it keeps a
+     visible label because a select showing "All" says nothing about what it
+     filters. Both sit on one baseline via .control-bar. */
+  const searchField = document.createElement("div");
+  searchField.className = "control-search";
+  const search = SearchBox(searchField, {
+    placeholder: "Search orders…",
+    columns: oCols,          // never search the template's spare columns
+    onChange: f => { searchPred = f; apply(); },
+  });
+  search.el.id = "orders-search";
+  search.el.setAttribute("aria-label", "Search orders");
+
+  const filterField = document.createElement("div");
+  filterField.className = "ss-form-field control-filter";
+  const filterLabel = document.createElement("label");
+  filterLabel.className = "ss-form-label";
+  filterLabel.setAttribute("for", "orders-supplier");
+  filterLabel.textContent = O.supplier;
+  const filterSel = document.createElement("select");
+  filterSel.className = "ss-input";
+  filterSel.id = "orders-supplier";
+  filterSel.onchange = () => { supplier = filterSel.value; apply(); };
+  filterField.append(filterLabel, filterSel);
+
+  /* A new line is seeded the way the workbook's own blank lines are (zero
+     amounts, "-" status): an all-empty row is stored as blank cells and
+     never comes back. The new record opens straight away, since adding one
+     is always followed by filling it in. */
+  const addBtn = document.createElement("button");
+  addBtn.className = "ss-btn ss-btn-primary ss-shrink control-action";
+  addBtn.textContent = "Add order";
+  addBtn.onclick = async () => {
+    const seen = new Set(store.sheet(S_ORDERS).rows.map(r => r._row));
+    await store.addRow(S_ORDERS, { [O.amount]: 0, [O.paid]: 0, [O.status]: "-" });
+    await store.refresh();
+    const added = store.sheet(S_ORDERS).rows.find(r => !seen.has(r._row));
+    if (added) openRecord(document.getElementById("orders-detail"), S_ORDERS, added, oCols, oTypes);
+  };
+
+  controls.append(searchField, filterField, addBtn);
+
+  const fillSuppliers = () => {
+    const values = columnValues(store.sheet(S_ORDERS), O.supplier);
+    const current = filterSel.value;
+    filterSel.textContent = "";
+    filterSel.appendChild(new Option("All", ""));
+    values.forEach(v => filterSel.appendChild(new Option(v, v)));
+    filterSel.value = values.includes(current) ? current : "";
+    if (filterSel.value !== current) { supplier = filterSel.value; apply(); }
+  };
+  fillSuppliers();
+  store.subscribe(fillSuppliers);
+
+  /* ---- Prices ---- */
+  const pCols = realCols(store.sheet(S_PRICES));
+  const P = {
+    supplier: pick(pCols, "Fournisseurs", 0),
+    product: pick(pCols, "Produits", 1),
+    buy: pick(pCols, "Prix d'achat", 2),
+    shipping: pick(pCols, "Frais de livraison", 3),
+    cost: pick(pCols, "Coût de revient", 4),
+    margin: pick(pCols, "Marge (%)", 5),
+    sell: pick(pCols, "Prix de vente", 6),
+  };
+  const pricesGrid = document.getElementById("prices-grid");
+  pricesGrid.textContent = "";
+  const priceGrid = DataGrid(pricesGrid, store, {
+    sheet: S_PRICES,
+    columns: pCols,
+    editable: false,
+    /* Neither add nor delete on this sheet. Cost and sale price are
+       formulas filled down to the last line only: an appended line would
+       come back without them, and deleting one shifts the rows below it
+       without repointing their references. Adding or removing a product is
+       a job for Excel, where the formula fills down with the row. */
+    addable: false,
+    deletable: false,
+    format: { [P.buy]: eur, [P.shipping]: eur, [P.cost]: eur, [P.sell]: eur, [P.margin]: pct },
+    onRowClick: row => openRecord(document.getElementById("prices-detail"), S_PRICES, row, pCols, {
+      [P.supplier]: "number", [P.product]: "text", [P.buy]: "number",
+      [P.shipping]: "number", [P.margin]: "number",
+    }),
+  });
+  keyboardRows(priceGrid);
+
+  /* ---- Reference lists (Paramètres) ----
+   * The sheet has no header row: it is two standalone lists, each headed by
+   * its own label cell and closed by the workbook's own instruction line.
+   * Read-only, because adding an entry means inserting a row inside the
+   * range the Excel dropdowns point at, which is what that note explains. */
+  const refList = (host, colKey) => {
+    const render = () => {
+      const values = store.sheet(S_PARAMS).rows
+        .map(r => r[colKey])
+        .filter(v => v !== null && v !== undefined && v !== "")
+        .map(String);
+      host.textContent = "";
+      if (!values.length) return;
+      const heading = document.createElement("h2");
+      heading.textContent = values[0];
+      host.appendChild(heading);
+      const items = values.slice(1);
+      const note = items.length && items[items.length - 1].length > 40 ? items.pop() : "";
+      if (items.length) {
+        const ul = document.createElement("ul");
+        ul.className = "ref-list ss-stack";
+        items.forEach(v => {
+          const li = document.createElement("li");
+          li.textContent = v;
+          ul.appendChild(li);
+        });
+        host.appendChild(ul);
+      } else {
+        host.appendChild(Object.assign(document.createElement("p"), {
+          className: "ss-muted", textContent: "No entries yet. Add them in the spreadsheet.",
+        }));
+      }
+      if (note) {
+        const p = document.createElement("p");
+        p.className = "ss-muted";
+        p.textContent = note;
+        host.appendChild(p);
+      }
+    };
+    render();
+    store.subscribe(render);
+  };
+  const paramCols = store.sheet(S_PARAMS).headers;
+  refList(document.getElementById("params-a"), paramCols[0]);
+  refList(document.getElementById("params-b"), paramCols[paramCols.length - 1]);
+
+  /* ---- Views ----
+   * Orders lead; the workbook's own order (Paramètres first) would bury
+   * them behind a tab. */
+  const views = { [S_ORDERS]: "view-orders", [S_PRICES]: "view-prices", [S_PARAMS]: "view-params" };
+  const showView = name => Object.entries(views).forEach(([n, id]) => {
+    document.getElementById(id).hidden = n !== name;
+  });
+  Tabs(document.getElementById("tabs"), [S_ORDERS, S_PRICES, S_PARAMS], {
+    active: S_ORDERS,
+    onSelect: showView,
+  });
+  showView(S_ORDERS);
+}
+
+store.start();
+</script>
+</body>
+</html>
