@@ -9,10 +9,19 @@
  *   ...
  *   await store.saveCell("Orders", 12, "Quantity", 5);
  *
- * The store polls a cheap /api/version endpoint and only fetches the full
- * payload when the version moved, either from this page's own writes or
- * from someone editing the file directly in Excel. Subscribers therefore
- * only fire when the data actually changed.
+ * The store polls a cheap /api/version endpoint and only fetches when the
+ * version moved, either from this page's own writes or from someone editing
+ * the file directly in Excel. Subscribers therefore only fire when the data
+ * actually changed.
+ *
+ * What it fetches then is the difference, not the workbook: /api/changes
+ * returns the ops that carry version N to version M, and _applyChange
+ * replays them against the local copy. A full /api/data payload is for the
+ * first load and for the cases the server says it can't describe as ops (a
+ * page that was away longer than the server's log, a restarted server, an
+ * external edit large enough that the sheet itself is the smaller answer).
+ * _applyChange is the mirror of _apply in sync_server.py: the two apply the
+ * same ops by the same rules, and have to change together.
  */
 
 class SheetStore {
@@ -145,6 +154,73 @@ class SheetStore {
 
   stop() { this._running = false; }
 
+  /* --- keeping up ---------------------------------------------------------
+   * Catch up to the server's version, cheaply when it can describe the
+   * difference and completely when it can't.
+   */
+
+  async _pull() {
+    if (!this.loaded || this.version < 0) return this.refresh();
+    let body;
+    try {
+      const res = await fetch(`${this.api}/api/changes?since=${this.version}`);
+      if (!res.ok) return this.refresh();
+      body = await res.json();
+    } catch {
+      // A store that can't read the change feed falls back rather than
+      // sitting on data it knows is stale.
+      return this.refresh();
+    }
+    if (body.reset || !Array.isArray(body.changes)) return this.refresh();
+    try {
+      for (const change of body.changes) this._applyChange(change);
+    } catch {
+      // A half-applied batch is worse than a slow one: refetch rather than
+      // leave the page holding something the file does not say.
+      return this.refresh();
+    }
+    this.version = body.version;
+    this._emit();
+  }
+
+  // The mirror of _apply in sync_server.py. See the ops listed there.
+  _applyChange(change) {
+    if (change.type === "sheet") { this.sheets[change.sheet] = change.data; return; }
+    const sheet = this.sheets[change.sheet];
+    if (!sheet) return;
+    const rows = sheet.rows;
+    const at = this._findRow(rows, change.row);
+    const found = at < rows.length && rows[at]._row === change.row;
+
+    if (change.type === "cell") {
+      if (found) rows[at][change.column] = change.value;
+      delete sheet.formulas[`${change.row}:${change.column}`];
+    } else if (change.type === "row_upsert") {
+      const record = { ...change.record, _row: change.row };
+      if (found) rows[at] = record; else rows.splice(at, 0, record);
+      for (const [column, formula] of Object.entries(change.formulas || {})) {
+        sheet.formulas[`${change.row}:${column}`] = formula;
+      }
+    } else if (change.type === "row_delete") {
+      if (found) rows.splice(at, 1);
+      // Deleting a row in the file shifts every row below it up by one, so
+      // the local copy's row numbers and formula keys shift with it.
+      if (change.shift) for (let i = at; i < rows.length; i++) rows[i]._row -= 1;
+      sheet.formulas = shiftFormulaKeys(sheet.formulas, change.row, change.shift);
+    }
+  }
+
+  // Rows arrive ordered by _row and every op above keeps them that way, so
+  // finding one is a binary search rather than a scan of the whole sheet.
+  _findRow(rows, rowIdx) {
+    let lo = 0, hi = rows.length;
+    while (lo < hi) {
+      const mid = (lo + hi) >> 1;
+      if (rows[mid]._row < rowIdx) lo = mid + 1; else hi = mid;
+    }
+    return lo;
+  }
+
   async refresh() {
     const res = await fetch(`${this.api}/api/data`);
     const data = await res.json();
@@ -165,7 +241,7 @@ class SheetStore {
       // edit. Report it once per occurrence.
       if (error && error !== this._lastFlushError) { this._lastFlushError = error; this._failed(error); }
       if (!error) this._lastFlushError = null;
-      if (version !== this.version) await this.refresh();
+      if (version !== this.version) await this._pull();
     } catch {
       this._setStatus(false);
     } finally {
@@ -200,6 +276,22 @@ class SheetStore {
   async deleteRow(sheet, rowIdx) {
     await this._write(`${this.api}/api/rows/${encodeURIComponent(sheet)}/${rowIdx}`, { method: "DELETE" });
   }
+}
+
+/* Formula keys are "row:column", so a delete drops the row's own entries
+ * and, when it shifted the sheet, renumbers every key below it.
+ */
+function shiftFormulaKeys(formulas, rowIdx, shift) {
+  const out = {};
+  for (const [key, formula] of Object.entries(formulas)) {
+    const sep = key.indexOf(":");
+    const row = Number(key.slice(0, sep));
+    if (!Number.isInteger(row)) { out[key] = formula; continue; }
+    if (row === rowIdx) continue;
+    if (shift && row > rowIdx) out[`${row - 1}:${key.slice(sep + 1)}`] = formula;
+    else out[key] = formula;
+  }
+  return out;
 }
 
 /* Column type inference, so form and input components can pick sensible

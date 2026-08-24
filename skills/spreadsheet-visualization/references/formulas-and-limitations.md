@@ -120,40 +120,64 @@ save time. Two consequences:
   pays a ~20s parse. That cached workbook is dropped whenever the watcher
   sees an external change, because saving a copy parsed before someone
   else's edit would silently revert it.
-- **Saving is deferred.** `wb.save()` rewrites the whole file whatever
-  changed (~2.9s on a 10k-row sheet), so an edit updates the in-memory
-  workbook and `_schedule_flush` writes once after a short quiet period.
-  A burst of edits costs one save. Anything that re-reads the file flushes
-  first, so the deferral is invisible to the browser, and a save that fails
-  is reported on the next `/api/version` poll rather than on the request
-  that made the edit. The window is small but real: a hard kill within it
-  loses the last edits. `sync_server.py` flushes on shutdown for the
-  ordinary case.
+- **Saving is deferred, and off the interactive path.** `wb.save()`
+  rewrites the whole file whatever changed (~3s on a 10k-row sheet), so an
+  edit updates the in-memory workbook and `_schedule_flush` writes once
+  after a short quiet period. A burst of edits costs one save. The browser
+  never waits for it: the read model already has the change, so the save
+  shows readers nothing new and deliberately does not move the version.
+  Anything that re-reads the file flushes first. A save that fails is
+  reported on the next `/api/version` poll rather than on the request that
+  made the edit. The window is small but real: a hard kill within it loses
+  the last edits. `sync_server.py` flushes on shutdown for the ordinary
+  case.
 - **Sheet order.** Flask sorts dict keys when serializing by default, which
   would hand the frontend a workbook's sheets alphabetically. Order is
   meaningful (a workbook of month sheets is in calendar order, not
   Août/Avril/Décembre), so the server turns that off. Compositions can rely
   on `store.sheetNames()` matching the workbook's own tab order.
 - **Concurrency.** Writes are guarded with a `filelock` so the HTML frontend
-  and a human editing in Excel don't corrupt the file mid-save, but Excel
+  and a human editing in Excel don't corrupt the file mid-save, and reads
+  never take that lock, so a poll can't queue behind a save. Excel
   itself locks the file while open on Windows. Writes from the API will
   fail with a permission error until the human closes or saves the file.
   Surface this to the user rather than treating it as a bug.
-- **Polling, not push.** `SheetStore` polls a cheap `/api/version` endpoint
-  (default every 1s) and only fetches the full `/api/data` payload when the
-  version actually changed; the server likewise caches the parsed sheet and
-  only re-reads from disk when its own writes or the filesystem watcher
-  bump the version. This keeps steady-state polling cheap even on
-  multi-thousand-row sheets (a ~5,000-row xlsx dropped from ~1.6s to ~0.15s
-  per poll once cached in testing) without needing websockets. `DataGrid`
+- **Polling, not push, and it fetches the difference.** `SheetStore` polls
+  a cheap `/api/version` endpoint (default every 1s) and fetches only when
+  the version moved. What it fetches then is `/api/changes?since=N`: the
+  ops that carry version N to the current one, which for a one-cell edit is
+  a couple of hundred bytes rather than the whole workbook. On a 10k-row
+  sheet that is the difference between an edit reaching the browser in
+  ~8s and in ~10ms. The full `/api/data` payload is for the first load and
+  for what the server declines to describe as ops: a page further behind
+  than the 400-entry log, a server that restarted under it, or a change
+  large enough that sending the sheet is smaller than describing it. A page
+  never has to ask for that fallback; `SheetStore` takes it automatically
+  when the server answers `reset`. `DataGrid`
   paginates (`pageSize`, default 100) since rendering thousands of
   `contenteditable` DOM rows at once is sluggish to scroll even though the
   data loads fine; `ChartBlock` caps at the top `topN` (default 30) rows
   by the Y value, since more bars/points than that stop being readable.
-- **Multiple sheets.** The API always returns every sheet in the workbook;
-  the composed page picks which to show (e.g. via Tabs). For very large
-  workbooks with many sheets, consider adding a `?sheet=` query param to
-  `/api/data` to avoid serializing sheets nobody is viewing.
+- **Multiple sheets, and no windowing.** The API returns every sheet and
+  every row; the composed page picks what to show, and filters, sorts and
+  paginates in the browser over the full set. So the first load is sized by
+  the file, not by what is on screen, and a workbook with many large sheets
+  pays for the ones nobody is viewing. Edits after that first load cost
+  what the edit costs, not what the file costs. Making the server window
+  and sort would change what `store.sheet(name).rows` means for every page
+  already generated, so it is a deliberate break to plan rather than a
+  patch: see `dev/sync-architecture-review.md`.
+- **Two copies of the data, one set of rules.** The server holds the read
+  model and the browser holds a copy, and both move forward by applying the
+  same change ops: `_apply` in `sync_server.py`, `_applyChange` in
+  `sheetsync.js`. They are a mirror. Changing one without the other makes
+  the browser quietly disagree with the file while both look healthy. If
+  you adapt either, adapt both, and check that replaying the feed lands on
+  exactly what `/api/data` returns.
+- **Memory.** The model is a workbook's worth of Python dicts, held for as
+  long as the server runs, alongside the writable workbook and the cached
+  `/api/data` body. On the files this is built for that is tens of
+  megabytes. It is the first thing that would give on a very large one.
 - **Chart fields are the composer's decision.** ChartBlock takes explicit
   `x`/`y`. When composing, pick a label-like column for X and an actual
   measure for Y, not a numeric-but-meaningless identifier (row numbers,

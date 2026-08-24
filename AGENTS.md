@@ -59,6 +59,13 @@ does not exist.
   building blocks that generated apps link to. Treat their public APIs
   (component names, function signatures, CSS custom properties) as stable;
   breaking them breaks every previously generated app.
+- The server's read model and the browser's copy move forward by applying
+  the same change ops: `_apply` in `scripts/sync_server.py` and
+  `_applyChange` in `assets/sheetsync.js`. They are a mirror. Adding an op,
+  or changing what one means, means changing both in the same commit, and
+  the HTTP API keeping the old ops working for pages already generated. A
+  mismatch does not fail loudly: the browser shows something the file does
+  not say, and both look healthy.
 - Themes in `assets/themes/` only override CSS custom properties defined in
   `base.css`. They must not introduce new selectors that components depend on.
 - The `references/` docs (`components.md`, `theming.md`,

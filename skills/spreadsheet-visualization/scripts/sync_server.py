@@ -24,9 +24,14 @@ reads the file afterwards flushes first, so the deferral is invisible to
 the browser; a save that fails is reported on the next poll rather than on
 the request that made the edit.
 
-Known scaling limits, measured: a change of any size invalidates the whole
-read cache, so one edit costs a full re-parse and a full payload. See
-dev/sync-architecture-review.md before optimising further.
+While the server runs, an in-memory model owns the truth for reads. The
+file is what that model is persisted to and where external edits arrive
+from, not something every read re-derives from: the server applies its own
+writes to the model directly rather than re-parsing the file to discover a
+change it just made. Each change is also recorded as an op in a bounded
+log, and /api/changes replays it, so a browser one edit behind fetches one
+edit instead of the whole workbook. See dev/sync-architecture-review.md for
+the measurements behind that design.
 
 This script is a *template* meant to be copied into a project and adapted:
 adjust SHEET file path via --file, and tweak read_workbook/write_cell if the
@@ -66,7 +71,9 @@ changes which file is now the live source of truth.
 """
 
 import argparse
+import collections
 import contextlib
+import copy
 import csv
 import re
 import threading
@@ -80,6 +87,18 @@ from watchdog.observers import Observer
 
 app = Flask(__name__)
 
+# How many versions of history /api/changes can replay. A browser further
+# behind than this refetches everything, which is the right answer for a tab
+# that was asleep: the log exists to make the common case (a poll or two
+# behind) cheap, not to be a durable journal.
+CHANGE_LOG_LIMIT = 400
+
+# Past this many ops for one sheet, sending the sheet is cheaper than
+# sending the difference. Bounds the reconcile after an external edit: a
+# save from Excel that shifted every row produces a diff the size of the
+# sheet, and shipping the sheet once beats shipping it as ten thousand ops.
+MAX_DIFF_OPS = 200
+
 STATE = {
     # --- what we're serving -------------------------------------------
     "path": None,           # the spreadsheet, after any .xls conversion
@@ -89,11 +108,22 @@ STATE = {
     "recalc": False,        # --recalc, see _formula_solution_for
 
     # --- read side ----------------------------------------------------
-    # version is the change counter the browser polls; cache is the parsed
-    # workbook it was built from, reused until version moves.
+    # sheets is the read model, the truth for every read while the server
+    # runs. version is the change counter the browser polls, and log holds
+    # the ops that carried the model from one version to the next, so a
+    # browser that is behind can fetch the difference instead of the
+    # workbook. payload caches the serialized /api/data body per version,
+    # because encoding several megabytes of JSON is not free either.
+    "sheets": None,
     "version": 0,
-    "cache": None,
-    "cache_version": -1,
+    "log": collections.deque(maxlen=CHANGE_LOG_LIMIT),
+    "payload": None,
+    "stale": False,         # an external edit landed; reload before serving
+    "reload_timer": None,
+    # Counts external edits only, never our own writes. The background
+    # warm-up adopts its parse only if this has not moved; version can't
+    # serve that check any more, because it now moves on every keystroke.
+    "external": 0,
 
     # --- write side ---------------------------------------------------
     # One workbook is held open so an edit costs a save rather than a
@@ -126,6 +156,22 @@ STATE = {
     # would hide it the moment it was added. sheet name -> row indices.
     "appended": {},
 }
+
+# Locks, and the order they must be taken in.
+#
+#   LOAD_LOCK   one re-read of the file at a time
+#     WB_LOCK   the writable workbook, and saving it
+#       FileLock (see _lock) the file itself, across processes
+#   MODEL_LOCK  the read model, version, log and payload cache
+#
+# MODEL_LOCK is a leaf: nothing waits on anything while holding it, and it
+# is never held for longer than a dict update. That is what keeps a poll
+# from queueing behind a multi-second save, which is how a normally fast
+# edit used to take seconds. Anything slow (parsing, saving) happens under
+# LOAD_LOCK or WB_LOCK, which block other *writes* and never block reads.
+LOAD_LOCK = threading.Lock()
+WB_LOCK = threading.RLock()
+MODEL_LOCK = threading.RLock()
 
 # Flask sorts dict keys when serializing by default, which reorders the
 # sheets alphabetically. Sheet order in a workbook carries meaning (a
@@ -501,21 +547,38 @@ def _invalidate_workbook():
     are in flight; this covers every other caller, because silently losing
     a change the user already made is the worst outcome available.
     """
-    if STATE["dirty"] and STATE["wb"] is not None:
-        try:
-            _flush()
-        except Exception:
-            pass
-    STATE["wb"] = None
-    STATE["wb_path"] = None
-    STATE["header_cache"].clear()
-    # Whoever edited the file may have filled or removed the blank rows we
-    # were keeping visible; re-reading from disk is the honest state.
-    STATE["appended"].clear()
+    with WB_LOCK:
+        if STATE["dirty"] and STATE["wb"] is not None:
+            try:
+                _flush()
+            except Exception:
+                pass
+        STATE["wb"] = None
+        STATE["wb_path"] = None
+        STATE["header_cache"].clear()
+        # Whoever edited the file may have filled or removed the blank rows
+        # we were keeping visible; re-reading from disk is the honest state.
+        STATE["appended"].clear()
+
+
+def _warm(path):
+    """Get both models ready before the user asks for them.
+
+    The read model comes first: it is what the browser blocks on, and the
+    page cannot render until it lands. The writable workbook follows,
+    because the first edit blocks on that one instead.
+    """
+    try:
+        _load_model()
+    except Exception:
+        return   # the first request will surface the problem properly
+    if _is_xlsx(Path(path)):
+        _warm_workbook(path)
 
 
 def _warm_workbook(path):
-    """Load the writable workbook in the background at startup.
+    """Load the writable workbook at startup, so the user's first edit
+    doesn't pay for it.
 
     The read path is fast (read_only mode), but the write path needs the
     editable model, which on a heavily styled workbook costs ~20s to build.
@@ -523,30 +586,40 @@ def _warm_workbook(path):
     Doing it during startup instead means the cost lands while nobody is
     waiting.
 
-    The result is only adopted if nothing changed while it loaded: any write
-    or external edit bumps the version, and adopting a workbook parsed
-    before that point could write stale content back over it.
+    Loads through the same _writable_workbook every write uses, under the
+    same lock, so an edit arriving mid-warm waits for this parse instead of
+    starting a second one. Two parses of the same workbook racing each other
+    is how "warming" used to make the first edit slower than no warming at
+    all. An external edit arriving during it blocks in _invalidate_workbook
+    and drops the result the moment this returns, which is the same
+    guarantee every other write path gets.
     """
-    import openpyxl
-
-    version_at_start = STATE["version"]
-    try:
-        wb = openpyxl.load_workbook(path, data_only=False)
-    except Exception:
-        return  # the first real write will surface the problem properly
-    if STATE["wb"] is None and STATE["version"] == version_at_start:
-        STATE["wb"] = wb
+    with WB_LOCK:
+        if STATE["wb"] is not None:
+            return
+        try:
+            _writable_workbook(Path(path))
+        except Exception:
+            pass  # the first real write will surface the problem properly
 
 
 def write_cell(path, sheet, row_idx, column, value):
+    """Store `value` and return what was actually stored.
+
+    The return matters as much as the write: the caller mirrors it into the
+    read model, and the model must hold the value Excel holds, not the
+    string the browser sent. See _coerce_value.
+    """
     path = Path(path)
     if _is_xlsx(path):
         wb = _writable_workbook(path)
         ws = wb[sheet]
         headers = _xlsx_headers(ws)
         col_idx = headers.index(column) + 1
-        ws.cell(row=row_idx, column=col_idx, value=_coerce_value(value))
+        stored = _coerce_value(value)
+        ws.cell(row=row_idx, column=col_idx, value=stored)
         _schedule_flush()
+        return stored
     else:
         rows = []
         with open(path, newline="", encoding="utf-8-sig") as f:
@@ -560,6 +633,7 @@ def write_cell(path, sheet, row_idx, column, value):
             writer = csv.DictWriter(f, fieldnames=headers)
             writer.writeheader()
             writer.writerows(rows)
+        return value          # csv stores text; what went in is what is there
 
 
 def append_row(path, sheet, values):
@@ -597,6 +671,40 @@ def append_row(path, sheet, values):
             writer = csv.DictWriter(f, fieldnames=headers)
             writer.writerow(values)
         return existing + 2  # header is row 1, so the first data row is 2
+
+
+def row_snapshot(path, sheet, row_idx, values=None):
+    """The record and formulas the read model should hold for one row.
+
+    Taken from the workbook this server just wrote, not from the file: the
+    two agree, and reading the file back to find out what we put in it is
+    the round trip this design exists to avoid. Shaped exactly like a row
+    read_workbook produces, so the model can't tell where a row came from.
+    """
+    path = Path(path)
+    if not _is_xlsx(path):
+        # Key order matches what the csv reader produces (columns, then
+        # _row), so a record built here and one read back from the file are
+        # indistinguishable rather than merely equal.
+        record = dict(values or {})
+        record["_row"] = row_idx
+        return record, {}
+    ws = _writable_workbook(path)[sheet]
+    headers, _ = _xlsx_header_info(ws)
+    record, formulas = {"_row": row_idx}, {}
+    for col_idx, header in enumerate(headers, start=1):
+        value = ws.cell(row=row_idx, column=col_idx).value
+        if isinstance(value, str) and value.startswith("="):
+            # read_workbook reports a formula's cached result, and a formula
+            # openpyxl just wrote has none. Empty is the honest answer until
+            # Excel opens the file and computes one.
+            formulas[header] = value
+            record[header] = None
+        else:
+            # openpyxl stores an empty string as a blank cell, so a re-read
+            # would call it None. Say None now rather than differ later.
+            record[header] = None if value == "" else value
+    return record, formulas
 
 
 def delete_row(path, sheet, row_idx):
@@ -680,7 +788,8 @@ def _formula_solution_lookup(solution, sheet_name, col_idx, row_idx):
 # editing the file directly in Excel) and bump the version so pollers refresh
 # ---------------------------------------------------------------------------
 
-FLUSH_DELAY = 0.5   # seconds of quiet before a burst of edits is written
+FLUSH_DELAY = 0.5    # seconds of quiet before a burst of edits is written
+RELOAD_DELAY = 0.4   # seconds of quiet before an external edit is re-read
 
 
 def _lock():
@@ -719,8 +828,13 @@ def _flush():
     Failures (the file open in Excel, most often) are recorded and reported
     on the next /api/version poll, because the HTTP request that made the
     edit has long since returned by the time this runs.
+
+    Deliberately does not touch the version. The version tracks what readers
+    can see, and they have seen this change since the moment it was applied
+    to the model; landing it on disk shows them nothing new. Bumping here is
+    what used to send every browser back for a payload it already had.
     """
-    with _lock():
+    with WB_LOCK, _lock():
         if not STATE["dirty"] or STATE["wb"] is None:
             return
         target = STATE["wb_path"] or STATE["path"]
@@ -731,7 +845,6 @@ def _flush():
                 STATE["wb"].save(target)
             STATE["dirty"] = False
             STATE["flush_error"] = None
-            STATE["version"] += 1
         except PermissionError:
             STATE["flush_error"] = ("The spreadsheet is locked by another program. "
                                     "Close it in Excel and your changes will be saved.")
@@ -796,12 +909,17 @@ class _ChangeHandler(FileSystemEventHandler):
             if not ours and STATE["dirty"]:
                 return   # our own unsaved edits are still in flight
             if not ours and time.time() - STATE["last_self_write"] > 0.75:
-                STATE["version"] += 1
+                STATE["external"] += 1
                 # Somebody else changed the file, so the workbook held open
                 # for writes is now stale. Dropping it forces the next write
                 # to re-read from disk; saving the stale copy instead would
                 # silently revert whatever was just done in Excel.
                 _invalidate_workbook()
+                # The read model is stale for the same reason. Re-reading
+                # here would run the parse on the watcher's thread, once per
+                # event, and a single save from Excel fires several; the
+                # version moves when the reconcile lands instead.
+                _schedule_reload()
 
 
 def start_watcher(path):
@@ -813,26 +931,308 @@ def start_watcher(path):
 
 
 # ---------------------------------------------------------------------------
+# The read model
+#
+# While the server runs, STATE["sheets"] is the truth for reads. The file is
+# what it is persisted to and where external edits arrive from, not the
+# thing every read re-derives from. That inversion is the point: the server
+# applies its own writes to the model directly, so a one-cell edit costs a
+# dict update rather than a re-parse of the workbook and a fresh multi-
+# megabyte payload for every open tab.
+#
+# Every change is expressed as an op, applied by _apply and appended to a
+# bounded log. /api/changes replays that log, and the browser applies the
+# same ops through the same rules (_applyChange in sheetsync.js). One
+# automaton, two copies of the data: whenever an op's meaning changes here,
+# it has to change there in the same commit, or the two drift apart while
+# both look healthy.
+#
+# The ops:
+#   {"type": "cell",       "sheet", "row", "column", "value"}
+#   {"type": "row_upsert", "sheet", "row", "record", "formulas"}
+#   {"type": "row_delete", "sheet", "row", "shift"}
+#   {"type": "sheet",      "sheet", "data"}      whole sheet replaced
+#   {"type": "reset"}                            refetch /api/data
+#
+# "shift" is what openpyxl's delete_rows does to a sheet: every row below
+# the deleted one moves up by one, so every _row below it, and every
+# formula key naming it, moves too. An external edit that removed a row is
+# reconciled against a fresh parse that already has the right indices, so
+# that one drops the row without shifting anything.
+# ---------------------------------------------------------------------------
+
+
+def _find_row(rows, row_idx):
+    """Index of `row_idx` in a list of records ordered by _row, or where it
+    would be inserted. read_workbook emits rows in file order and every op
+    below preserves it, so this is a binary search rather than a scan of
+    ten thousand records per edit.
+    """
+    lo, hi = 0, len(rows)
+    while lo < hi:
+        mid = (lo + hi) // 2
+        if rows[mid]["_row"] < row_idx:
+            lo = mid + 1
+        else:
+            hi = mid
+    return lo
+
+
+def _apply(sheets, change):
+    """Apply one op to a model. The mirror of _applyChange in sheetsync.js."""
+    kind = change["type"]
+    if kind == "reset":
+        return
+    name = change.get("sheet")
+    if kind == "sheet":
+        sheets[name] = change["data"]
+        return
+    sheet = sheets.get(name)
+    if sheet is None:
+        return
+    rows, formulas = sheet["rows"], sheet["formulas"]
+    row_idx = change["row"]
+    idx = _find_row(rows, row_idx)
+    found = idx < len(rows) and rows[idx]["_row"] == row_idx
+
+    if kind == "cell":
+        if found:
+            rows[idx][change["column"]] = change["value"]
+        # A written cell is a literal now, whatever it held before.
+        formulas.pop(f"{row_idx}:{change['column']}", None)
+
+    elif kind == "row_upsert":
+        record = dict(change["record"])
+        record["_row"] = row_idx
+        if found:
+            rows[idx] = record
+        else:
+            rows.insert(idx, record)
+        for column, formula in (change.get("formulas") or {}).items():
+            formulas[f"{row_idx}:{column}"] = formula
+
+    elif kind == "row_delete":
+        if found:
+            rows.pop(idx)
+        if change.get("shift"):
+            for record in rows[idx:]:
+                record["_row"] -= 1
+        sheet["formulas"] = _shift_formulas(formulas, row_idx, change.get("shift"))
+
+
+def _shift_formulas(formulas, row_idx, shift):
+    """Formula keys after row `row_idx` was deleted. Keys are "row:column",
+    so the row's own entries go and, when the delete shifted the sheet,
+    every key below it is renumbered.
+    """
+    out = {}
+    for key, formula in formulas.items():
+        row_part, _, column = key.partition(":")
+        try:
+            row = int(row_part)
+        except ValueError:
+            out[key] = formula
+            continue
+        if row == row_idx:
+            continue
+        if shift and row > row_idx:
+            out[f"{row - 1}:{column}"] = formula
+        else:
+            out[key] = formula
+    return out
+
+
+def _diff_sheets(previous, fresh):
+    """Ops that carry `previous` to `fresh`, for reconciling an external edit.
+
+    Falls back to whole-sheet ops when the difference stops being small: a
+    changed header row, a moved header, an altered formula, or simply more
+    changes than MAX_DIFF_OPS. Sending a sheet is a bounded cost; sending
+    ten thousand ops to describe the same thing is not. A workbook that
+    gained or lost a sheet resets outright.
+    """
+    if set(previous) != set(fresh):
+        return [{"type": "reset"}]
+    changes = []
+    for name, new_sheet in fresh.items():
+        old_sheet = previous[name]
+        if (old_sheet["headers"] != new_sheet["headers"]
+                or old_sheet["header_row"] != new_sheet["header_row"]
+                or old_sheet["meta"] != new_sheet["meta"]
+                or old_sheet["formulas"] != new_sheet["formulas"]):
+            changes.append(_sheet_op(name, new_sheet))
+            continue
+        old_rows = {r["_row"]: r for r in old_sheet["rows"]}
+        new_rows = {r["_row"]: r for r in new_sheet["rows"]}
+        sheet_changes = []
+        for row_idx, record in new_rows.items():
+            before = old_rows.get(row_idx)
+            if before is None:
+                sheet_changes.append({"type": "row_upsert", "sheet": name,
+                                      "row": row_idx, "record": dict(record),
+                                      "formulas": _row_formulas(new_sheet, row_idx)})
+            elif before != record:
+                for column in new_sheet["headers"]:
+                    if before.get(column) != record.get(column):
+                        sheet_changes.append({"type": "cell", "sheet": name, "row": row_idx,
+                                              "column": column, "value": record.get(column)})
+            if len(sheet_changes) > MAX_DIFF_OPS:
+                break
+        else:
+            for row_idx in old_rows:
+                if row_idx not in new_rows:
+                    # The fresh parse already carries the right indices, so
+                    # this drops a row without renumbering the ones below.
+                    sheet_changes.append({"type": "row_delete", "sheet": name,
+                                          "row": row_idx, "shift": False})
+        if len(sheet_changes) > MAX_DIFF_OPS:
+            changes.append(_sheet_op(name, new_sheet))
+        else:
+            changes.extend(sheet_changes)
+    return changes
+
+
+def _sheet_op(name, sheet):
+    """A whole-sheet op, carrying a copy rather than the model's own sheet.
+
+    The log is replayed by pages that are several versions behind, so an op
+    has to mean what it meant when it was recorded. Handing out the live
+    sheet would let later ops edit it from under an older reader: it would
+    receive a sheet that already has a row deleted, then be told to delete
+    that row, and quietly lose a different one. The copy is paid only when
+    a sheet changed more than MAX_DIFF_OPS worth, which is already a path
+    that just re-parsed the file.
+    """
+    return {"type": "sheet", "sheet": name, "data": copy.deepcopy(sheet)}
+
+
+def _row_formulas(sheet, row_idx):
+    prefix = f"{row_idx}:"
+    return {key[len(prefix):]: formula
+            for key, formula in sheet["formulas"].items() if key.startswith(prefix)}
+
+
+def _record(*changes):
+    """Apply changes to the model, move the version, and log them for
+    /api/changes. Returns the new version.
+    """
+    with MODEL_LOCK:
+        if STATE["sheets"] is not None:
+            for change in changes:
+                _apply(STATE["sheets"], change)
+        STATE["version"] += 1
+        STATE["log"].append((STATE["version"], list(changes)))
+        STATE["payload"] = None
+        return STATE["version"]
+
+
+def _install(sheets, changes):
+    """Make a freshly parsed workbook the model, describing the move to
+    anyone polling as `changes`.
+    """
+    with MODEL_LOCK:
+        STATE["sheets"] = sheets
+        STATE["stale"] = False
+        STATE["version"] += 1
+        STATE["log"].append((STATE["version"], list(changes)))
+        STATE["payload"] = None
+        return STATE["version"]
+
+
+def _load_model():
+    """Re-read the file and make it the model, reconciling with what the
+    model held before.
+
+    Holds WB_LOCK for the whole parse, so no write can land in the workbook
+    while the file is being read and go missing from the result. That blocks
+    writes for the duration and never blocks reads, which is the trade that
+    matters: a read happens on every poll, a re-read only at startup and
+    when somebody else edits the file. LOAD_LOCK keeps two of these from
+    running at once, so a burst of watcher events costs one parse.
+    """
+    with MODEL_LOCK:
+        # The common case by a wide margin: every /api/data comes through
+        # here and the model is almost always current. Answering it under
+        # the read lock alone keeps a page load from queueing behind a save.
+        if STATE["sheets"] is not None and not STATE["stale"]:
+            return STATE["sheets"]
+    with LOAD_LOCK, WB_LOCK:
+        with MODEL_LOCK:
+            if STATE["sheets"] is not None and not STATE["stale"]:
+                return STATE["sheets"]      # another thread got here first
+            previous = STATE["sheets"]
+        if STATE["dirty"]:
+            _flush()          # our own pending edits belong on disk before we read it
+        with _lock():
+            fresh = read_workbook(STATE["path"], recalc=STATE["recalc"],
+                                  keep_rows=STATE["appended"])
+        _install(fresh, _diff_sheets(previous, fresh) if previous is not None
+                 else [{"type": "reset"}])
+        with MODEL_LOCK:
+            return STATE["sheets"]
+
+
+def _reload(attempt=0):
+    try:
+        _load_model()
+    except Exception as exc:
+        # Most often the other program is still writing. Try again shortly;
+        # if it keeps failing, say so rather than serving stale data as if
+        # it were current.
+        if attempt < 3:
+            _schedule_reload(delay=1.0, attempt=attempt + 1)
+        else:
+            print(f"Warning: could not re-read {STATE['path']}: {type(exc).__name__}: {exc}")
+
+
+def _schedule_reload(delay=RELOAD_DELAY, attempt=0):
+    """Mark the model stale and (re)arm the re-read.
+
+    Saving from Excel fires several filesystem events, and a re-read costs
+    seconds on a real workbook, so the timer is reset by each one and a
+    whole save costs one parse.
+    """
+    with MODEL_LOCK:
+        STATE["stale"] = True
+        timer = STATE["reload_timer"]
+        if timer is not None:
+            timer.cancel()
+        timer = threading.Timer(delay, _reload, args=(attempt,))
+        timer.daemon = True
+        STATE["reload_timer"] = timer
+        timer.start()
+
+
+def _dumps(obj):
+    """Encode with Flask's encoder, so dates and decimals serialize exactly
+    as they do through jsonify. Used where a response body is cached rather
+    than built per request.
+    """
+    # Compact separators, matching what jsonify sends: the difference is a
+    # space per key on a payload that runs to millions of them.
+    try:
+        return app.json.dumps(obj, separators=(",", ":"))     # Flask >= 2.2
+    except AttributeError:                                    # older Flask
+        from flask import json as flask_json
+        return flask_json.dumps(obj, separators=(",", ":"))
+
+
+def _json(body):
+    return app.response_class(_dumps(body), mimetype="application/json")
+
+
+# ---------------------------------------------------------------------------
 # HTTP API
 # ---------------------------------------------------------------------------
 
-def _get_sheets():
-    """Re-parsing a multi-thousand-row workbook (twice, for values + formulas)
-    takes over a second on real-world files. Since the frontend polls
-    frequently but the file usually hasn't changed between polls, cache the
-    parsed result and only re-read from disk when the version counter moved
-    (from our own write or the file watcher noticing an external edit).
+def _drop_appended(sheet, row_idx):
+    """Keep the blank-rows-we-added set aligned with a delete, which shifted
+    every row below it up by one. See STATE["appended"].
     """
-    # Pending edits live only in the cached workbook, so land them before
-    # re-reading from disk or the browser would be shown its own edit
-    # reverted.
-    if STATE["dirty"]:
-        flush_now()
-    if STATE["cache"] is None or STATE["cache_version"] != STATE["version"]:
-        with _lock():
-            STATE["cache"] = read_workbook(STATE["path"], recalc=STATE["recalc"], keep_rows=STATE["appended"])
-        STATE["cache_version"] = STATE["version"]
-    return STATE["cache"]
+    rows = STATE["appended"].get(sheet)
+    if not rows:
+        return
+    STATE["appended"][sheet] = {r - 1 if r > row_idx else r for r in rows if r != row_idx}
 
 
 def _write_guard(fn):
@@ -870,16 +1270,67 @@ def api_version():
 
 @app.get("/api/data")
 def api_data():
-    return jsonify({"version": STATE["version"], "sheets": _get_sheets()})
+    """The whole workbook. The first load, and the fallback whenever a page
+    is too far behind for /api/changes to catch it up.
+
+    The encoded body is cached per version: a full payload is megabytes on a
+    real workbook, and encoding it again for a second tab, or for a page
+    that reloaded, is work already done.
+    """
+    _load_model()
+    with MODEL_LOCK:
+        cached = STATE["payload"]
+        if cached is None or cached[0] != STATE["version"]:
+            cached = (STATE["version"],
+                      _dumps({"version": STATE["version"], "sheets": STATE["sheets"] or {}}))
+            STATE["payload"] = cached
+    return app.response_class(cached[1], mimetype="application/json")
+
+
+@app.get("/api/changes")
+def api_changes():
+    """What moved since version `since`, as ops the browser replays.
+
+    This is the endpoint that makes an edit cost an edit. A page a poll or
+    two behind gets the cells that changed; one that has been away longer
+    than the log is told to refetch, which is the honest answer rather than
+    a guess.
+    """
+    since = request.args.get("since", type=int)
+    with MODEL_LOCK:
+        version = STATE["version"]
+        if since is None or since > version or STATE["sheets"] is None:
+            # since > version means the server restarted under the page.
+            return jsonify({"version": version, "reset": True})
+        if since == version:
+            return jsonify({"version": version, "changes": []})
+        log = list(STATE["log"])
+        # log[0] carries the model from log[0] - 1 to log[0], so that is the
+        # oldest version we can still replay from.
+        if not log or since < log[0][0] - 1:
+            return jsonify({"version": version, "reset": True})
+        changes = [change for entry_version, batch in log if entry_version > since
+                   for change in batch]
+    if any(change["type"] == "reset" for change in changes):
+        return jsonify({"version": version, "reset": True})
+    return _json({"version": version, "changes": changes})
 
 
 @app.post("/api/cell")
 def api_cell():
     body = request.get_json(force=True)
     def run():
-        with _lock():
-            write_cell(STATE["path"], body["sheet"], int(body["row"]), body["column"], body["value"])
-        return jsonify({"ok": True, "version": STATE["version"], "pending": True})
+        sheet, row_idx, column = body["sheet"], int(body["row"]), body["column"]
+        # WB_LOCK spans the write and the record so the model's order of ops
+        # matches the workbook's. Two writes to one cell that landed in one
+        # order in the file and the other in the model would leave the
+        # browser showing something the file does not say.
+        with WB_LOCK:
+            with _lock():
+                stored = write_cell(STATE["path"], sheet, row_idx, column, body["value"])
+            version = _record({"type": "cell", "sheet": sheet, "row": row_idx,
+                               "column": column, "value": stored})
+        return jsonify({"ok": True, "version": version, "pending": True})
     return _write_guard(run)
 
 
@@ -887,21 +1338,40 @@ def api_cell():
 def api_add_row():
     body = request.get_json(force=True)
     def run():
-        with _lock():
-            row = append_row(STATE["path"], body["sheet"], body["values"])
+        sheet = body["sheet"]
+        with WB_LOCK:
+            with _lock():
+                row = append_row(STATE["path"], sheet, body["values"])
+                record, formulas = row_snapshot(STATE["path"], sheet, row, body["values"])
+            version = _record({"type": "row_upsert", "sheet": sheet, "row": row,
+                               "record": record, "formulas": formulas})
         # The row index goes back so the page can act on what it just
         # created (open a form on it, scroll to it). Without it a
         # composition can add a row but has no way to find it.
-        return jsonify({"ok": True, "version": STATE["version"], "row": row, "pending": True})
+        return jsonify({"ok": True, "version": version, "row": row, "pending": True})
     return _write_guard(run)
 
 
 @app.delete("/api/rows/<sheet>/<int:row_idx>")
 def api_delete_row(sheet, row_idx):
     def run():
-        with _lock():
-            delete_row(STATE["path"], sheet, row_idx)
-        return jsonify({"ok": True, "version": STATE["version"], "pending": True})
+        with WB_LOCK:
+            with _lock():
+                delete_row(STATE["path"], sheet, row_idx)
+            _drop_appended(sheet, row_idx)
+            with MODEL_LOCK:
+                model_sheet = (STATE["sheets"] or {}).get(sheet)
+                header_row = model_sheet["header_row"] if model_sheet else 0
+            if row_idx <= header_row:
+                # Deleting at or above the header moves the header itself,
+                # and with it every column name and every row's identity.
+                # Too much for an op to describe honestly: re-read instead.
+                _schedule_reload()
+                version = STATE["version"]
+            else:
+                version = _record({"type": "row_delete", "sheet": sheet,
+                                   "row": row_idx, "shift": True})
+        return jsonify({"ok": True, "version": version, "pending": True})
     return _write_guard(run)
 
 
@@ -974,8 +1444,7 @@ def main():
         )
 
     observer = start_watcher(path)
-    if _is_xlsx(path):
-        threading.Thread(target=_warm_workbook, args=(path,), daemon=True).start()
+    threading.Thread(target=_warm, args=(path,), daemon=True).start()
     print(f"Serving {path.name} live at http://127.0.0.1:{args.port}")
     print("Edit the file in Excel or in the browser. Both sides stay in sync.")
     try:

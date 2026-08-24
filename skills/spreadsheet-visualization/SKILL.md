@@ -158,9 +158,10 @@ hierarchy, and the states an app has to handle.
 
 Don't rebuild these; they're in `sync_server.py` and the store: file
 locking (browser vs. Excel write races), external-edit detection via
-filesystem watcher, version-gated polling so unchanged data is never
-refetched or re-parsed (a ~5,000-row sheet polls in ~0.15s), header-row
-auto-detection for exports with metadata blocks above the table (surfaced
+filesystem watcher, incremental sync so an edit costs an edit rather than
+the workbook (on a 10,000-row sheet an edit reaches the browser in ~10ms
+and a few hundred bytes, and an edit made in Excel comes back as the cells
+that moved), header-row auto-detection for exports with metadata blocks above the table (surfaced
 as `sheet.meta` for MetaPanel), formula-cell detection, legacy `.xls`
 conversion, and CSV support.
 

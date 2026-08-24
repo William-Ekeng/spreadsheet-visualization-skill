@@ -20,7 +20,7 @@ store.subscribe(fn)          // fn(store) called whenever data changed; returns 
 store.onStatus(fn)           // fn(connectedBool) on connect/disconnect transitions
 store.onError(fn)            // fn(message) when a write is refused (locked file, etc); writes also throw
 store.loaded                 // false until the first payload lands
-store.start()                // begin polling (cheap /api/version; full fetch only on change)
+store.start()                // begin polling (cheap /api/version; fetches only on change)
 store.sheetNames()           // ["Orders", ...]
 store.sheet(name)            // {headers, rows, formulas, meta, header_row}; rows carry _row (absolute file row)
 store.isFormulaCell(sheet, rowIdx, column)
@@ -28,6 +28,16 @@ await store.saveCell(sheet, rowIdx, column, value)
 await store.addRow(sheet, {col: value, ...})   // resolves to the new absolute file row
 await store.deleteRow(sheet, rowIdx)
 ```
+
+`start()` polls `/api/version`, and when it moves it fetches
+`/api/changes?since=N` and replays the ops onto its local copy, so a
+one-cell edit costs a couple of hundred bytes rather than the workbook. It
+falls back to the full `/api/data` payload by itself when the server says
+it can't describe the difference (first load, a page that was away too
+long, a restarted server, a large external edit). Nothing in a composition
+has to know which happened: `subscribe(fn)` fires either way, and
+`store.sheet(name)` returns the same shape. `_applyChange` is the mirror of
+`_apply` in `sync_server.py`; if you adapt one, adapt both.
 
 Helpers: `inferFieldType(sheetData, column)` returns `"number" | "date" |
 "checkbox" | "select" | "textarea" | "text"`. It picks `"textarea"` when the
