@@ -1,0 +1,536 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Suivi des commandes</title>
+<link rel="stylesheet" href="base.css">
+<script src="sheetsync.js"></script>
+<script src="components.js"></script>
+<style>
+  .app-shell { max-width: 1240px; margin: 0 auto; }
+  .app-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; margin-bottom: 20px; }
+  .view[hidden] { display: none; }
+  .toolbar { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+  .toolbar .ss-search-wrap { flex: 1 1 240px; max-width: 320px; }
+  .toolbar-spacer { flex: 1 1 auto; }
+  .check-inline { display: inline-flex; align-items: center; gap: 8px; white-space: nowrap; }
+  .detail-col { flex: 0 0 340px; width: 340px; }
+  .detail-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; margin-bottom: 12px; }
+  .detail-head h2 { margin: 0; }
+  .fourn-list { display: flex; flex-direction: column; gap: 14px; margin-top: 12px; }
+  .fourn-row { display: grid; grid-template-columns: minmax(140px, 1fr) 2fr auto; gap: 12px; align-items: center; }
+  .fourn-name { font-weight: 500; }
+  .fourn-sub { color: var(--ss-muted); font-size: 12px; }
+  .bar { height: 8px; border-radius: 999px; background: color-mix(in srgb, var(--ss-text) 8%, transparent); overflow: hidden; }
+  .bar > span { display: block; height: 100%; background: var(--ss-chart-1); }
+  .fourn-amounts { text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
+  .param-list { list-style: none; padding: 0; margin: 12px 0 0; }
+  .param-list li { padding: 8px 0; border-top: 1px solid color-mix(in srgb, var(--ss-text) 8%, transparent); }
+  @media (max-width: 900px) { .detail-col { flex: 1 1 100%; width: auto; } }
+</style>
+</head>
+<body>
+<div class="app-shell">
+
+  <div class="app-head">
+    <div>
+      <h1>Suivi des commandes</h1>
+      <div class="ss-muted">Suivi_des_commandes.xlsx &middot; chaque modification est &eacute;crite directement dans le fichier Excel</div>
+    </div>
+    <div id="status"></div>
+  </div>
+
+  <div id="tabs" style="margin-bottom:20px;"></div>
+
+  <!-- ---------------------------------------------------------- Commandes -->
+  <section class="view ss-stack" id="view-Commandes">
+    <div class="ss-row" id="tiles"></div>
+
+    <div class="ss-row">
+      <div class="ss-grow ss-panel ss-stack" style="min-width:520px;">
+        <div class="toolbar">
+          <div id="search"></div>
+          <label class="check-inline">
+            <span class="ss-muted" style="font-size:14px;color:var(--ss-text);">Satut</span>
+            <select class="ss-input" id="filtre-statut" style="width:auto;"></select>
+          </label>
+          <label class="check-inline ss-muted" style="font-size:14px;color:var(--ss-text);">
+            <input type="checkbox" class="ss-input" id="filtre-vides"> Masquer les lignes vides
+          </label>
+          <span class="toolbar-spacer"></span>
+          <button class="ss-btn ss-btn-primary" id="btn-nouvelle">+ Nouvelle commande</button>
+        </div>
+        <div id="grid"></div>
+        <div class="ss-muted">
+          Cliquez une ligne pour l&rsquo;ouvrir dans le volet de d&eacute;tail (dates, montants,
+          Fournisseurs et Satut y sont saisis avec les listes du fichier). Les colonnes
+          &laquo;&nbsp;Autre crit&egrave;re &agrave; d&eacute;finir&nbsp;&raquo; et &laquo;&nbsp;Livraison &agrave; relancer&nbsp;?&nbsp;&raquo; se
+          modifient directement dans le tableau.
+        </div>
+      </div>
+
+      <aside class="detail-col" id="detail" hidden></aside>
+    </div>
+
+    <div class="ss-panel">
+      <h2>Montants par fournisseur</h2>
+      <div class="ss-muted">Part r&eacute;gl&eacute;e de chaque fournisseur, calcul&eacute;e sur les commandes saisies.</div>
+      <div id="fournisseurs" class="fourn-list"></div>
+    </div>
+  </section>
+
+  <!-- --------------------------------------------------------------- Prix -->
+  <section class="view ss-stack" id="view-Prix" hidden>
+    <div class="ss-panel ss-stack">
+      <div>
+        <h2>Suivi des prix</h2>
+        <div class="ss-muted">
+          Co&ucirc;t de revient et Prix de vente sont des formules Excel, en lecture seule ici.
+          Comme l&rsquo;&eacute;criture dans le fichier ne recalcule pas les formules, ces deux
+          colonnes sont recalcul&eacute;es &agrave; l&rsquo;affichage&nbsp;: co&ucirc;t&nbsp;= prix d&rsquo;achat + frais de
+          livraison, prix de vente&nbsp;= co&ucirc;t &times; (1 + marge). Excel r&eacute;tablit ses propres
+          valeurs &agrave; la prochaine ouverture du fichier.
+          Marge (%) s&rsquo;&eacute;crit en fraction&nbsp;: 0,2 pour 20&nbsp;%.
+        </div>
+      </div>
+      <div class="ss-row">
+        <div class="ss-grow" style="min-width:420px;">
+          <div id="grid-prix"></div>
+          <div class="ss-muted" style="margin-top:12px;">
+            Cliquez une ligne pour la modifier dans le volet de d&eacute;tail&nbsp;: fournisseur,
+            produit, prix d&rsquo;achat, frais et marge y sont saisis avec le bon type de champ.
+          </div>
+        </div>
+        <aside class="detail-col" id="detail-prix" hidden></aside>
+      </div>
+    </div>
+  </section>
+
+  <!-- --------------------------------------------------------- Paramètres -->
+  <section class="view ss-stack" id="view-Parametres" hidden>
+    <div class="ss-muted">
+      Ces deux listes alimentent les menus d&eacute;roulants du volet de d&eacute;tail. Elles sont en
+      lecture seule ici&nbsp;: pour ajouter une entr&eacute;e, ins&eacute;rez une ligne dans la feuille
+      Param&egrave;tres du fichier Excel, comme l&rsquo;indique le mod&egrave;le.
+    </div>
+    <div class="ss-row">
+      <div class="ss-panel">
+        <h2>Produits</h2>
+        <ul class="param-list" id="liste-produits"></ul>
+        <div class="ss-muted" id="note-produits" style="margin-top:12px;"></div>
+      </div>
+      <div class="ss-panel">
+        <h2>Fournisseurs</h2>
+        <ul class="param-list" id="liste-fournisseurs"></ul>
+        <div class="ss-muted" id="note-fournisseurs" style="margin-top:12px;"></div>
+      </div>
+    </div>
+  </section>
+
+</div>
+
+<script>
+/* ---------------------------------------------------------------- colonnes
+ * Les noms de colonnes sont ceux du fichier, à la lettre (« Satut » compris).
+ */
+const F_CMD = "Commandes", F_PRIX = "Prix", F_PARAM = "Paramètres";
+
+const C = {
+  date:        'Date Commande\n(touche Ctrl + ";" pour inscrire la date facilement)',
+  fournisseur: "Fournisseurs",
+  montant:     "Montant",
+  livraison:   "Date de livraison",
+  regle:       "Montant réglé",
+  dateRegle:   "Date de règlement",
+  autre:       "Autre critère à définir",
+  statut:      "Satut",
+  relance:     "Livraison à relancer ?",
+};
+const COLS_CMD = [C.date, C.fournisseur, C.montant, C.livraison, C.regle, C.dateRegle, C.autre, C.statut, C.relance];
+
+const P = {
+  fournisseur: "Fournisseurs",
+  produit:     "Produits",
+  achat:       "Prix d'achat",
+  frais:       "Frais de livraison",
+  cout:        "Coût de revient",
+  marge:       "Marge (%)",
+  vente:       "Prix de vente",
+};
+const COLS_PRIX = [P.fournisseur, P.produit, P.achat, P.frais, P.cout, P.marge, P.vente];
+
+/* ----------------------------------------------------------------- format */
+const EUR = new Intl.NumberFormat("fr-FR", { style: "currency", currency: "EUR" });
+const rempli = v => v !== null && v !== undefined && String(v).trim() !== "";
+const nb = v => { const n = Number(String(v ?? "").replace(",", ".")); return isNaN(n) ? 0 : n; };
+const fmtEuro = v => (!rempli(v) ? "" : EUR.format(nb(v)));
+const fmtDate = v => {
+  if (!rempli(v)) return "";
+  const d = new Date(v);
+  return isNaN(d) ? String(v) : d.toLocaleDateString("fr-FR");
+};
+const fmtPct = v => (!rempli(v) ? "" : (nb(v) * 100).toLocaleString("fr-FR", { maximumFractionDigits: 2 }) + " %");
+
+/* Le classeur pose une ligne « . » tout en bas de chaque feuille pour tenir
+ * la plage du tableau. Ce n'est pas une commande, donc elle ne compte ni dans
+ * le tableau ni dans les totaux. */
+const estSentinelle = (row, cols) => cols.every(c => String(row[c] ?? "").trim() === ".");
+const estSaisie = row =>
+  rempli(row[C.date]) || rempli(row[C.fournisseur]) || nb(row[C.montant]) !== 0 ||
+  nb(row[C.regle]) !== 0 || rempli(row[C.autre]) || rempli(row[C.relance]) ||
+  (rempli(row[C.statut]) && String(row[C.statut]).trim() !== "-");
+
+const lignes = rows => rows.filter(r => !estSentinelle(r, COLS_CMD));
+const commandes = rows => lignes(rows).filter(estSaisie);
+
+/* ------------------------------------------------------------------ store */
+const store = new SheetStore();
+StatusDot(document.getElementById("status"), store);
+
+/* ------------------------------------------------------------------ tuiles */
+const tilesEl = document.getElementById("tiles");
+const tuile = (label, compute, format) =>
+  StatTile(tilesEl, store, { label, sheet: F_CMD, compute, format });
+
+tuile("Commandes saisies", rows => commandes(rows).length, v => String(v));
+tuile("Montant commandé", rows => commandes(rows).reduce((a, r) => a + nb(r[C.montant]), 0), EUR.format);
+tuile("Montant réglé", rows => commandes(rows).reduce((a, r) => a + nb(r[C.regle]), 0), EUR.format);
+tuile("Reste à régler",
+  rows => commandes(rows).reduce((a, r) => a + nb(r[C.montant]) - nb(r[C.regle]), 0), EUR.format);
+tuile("Livraisons à relancer", rows => commandes(rows).filter(r => rempli(r[C.relance])).length, v => String(v));
+
+/* ------------------------------------------------------------------ grille */
+const grid = DataGrid(document.getElementById("grid"), store, {
+  sheet: F_CMD,
+  columns: COLS_CMD,
+  // Les colonnes formatées (dates, euros) ne sont pas éditables sur place :
+  // une cellule éditable réécrirait sa propre chaîne formatée dans le fichier.
+  // Elles se saisissent dans le volet de détail, avec le bon type de champ.
+  editable: [C.autre, C.relance],
+  // Types explicites : l'inférence échantillonne aussi la ligne « . » de bas
+  // de feuille et transformerait une colonne vide en menu déroulant à une
+  // seule option, « . ».
+  types: { [C.autre]: "text", [C.relance]: "text" },
+  deletable: true,
+  pageSize: 50,
+  onRowClick: row => ouvrirDetail(row._row),
+  format: {
+    [C.date]: fmtDate,
+    [C.livraison]: fmtDate,
+    [C.dateRegle]: fmtDate,
+    [C.montant]: fmtEuro,
+    [C.regle]: fmtEuro,
+  },
+});
+
+/* L'en-tête de la première colonne porte une astuce Excel sur une deuxième
+ * ligne (« touche Ctrl + ; ») sans objet dans un navigateur. On affiche la
+ * première ligne du libellé et on garde le libellé complet en infobulle. */
+(function franciserGrille(root) {
+  const apply = () => {
+    root.querySelectorAll("thead th").forEach(th => {
+      if (th.textContent === C.date) { th.title = C.date; th.textContent = "Date Commande"; }
+    });
+    // Le compteur du composant est en anglais (« 17 matches ») et la grille
+    // porte toujours un filtre, ne serait-ce que pour écarter la ligne « . ».
+    const pager = root.querySelector(".ss-pager span");
+    if (pager) {
+      const m = /^(\d+) match(?:es)?$/.exec(pager.textContent);
+      if (m) pager.textContent = m[1] + (m[1] === "1" ? " ligne affichée" : " lignes affichées");
+    }
+  };
+  new MutationObserver(apply).observe(root, { childList: true, subtree: true });
+  apply();
+})(grid.el);
+
+/* ------------------------------------------------------- filtres du tableau */
+let predicatRecherche = null;
+let statutChoisi = "Tous";
+const masquerVides = document.getElementById("filtre-vides");
+const selStatut = document.getElementById("filtre-statut");
+
+function appliquerFiltres() {
+  grid.setFilter(row => {
+    if (estSentinelle(row, COLS_CMD)) return false;
+    if (masquerVides.checked && !estSaisie(row)) return false;
+    if (statutChoisi !== "Tous" && String(row[C.statut] ?? "") !== statutChoisi) return false;
+    if (predicatRecherche && !predicatRecherche(row)) return false;
+    return true;
+  });
+}
+
+SearchBox(document.getElementById("search"), {
+  placeholder: "Rechercher une commande…",
+  columns: COLS_CMD,
+  onChange: f => { predicatRecherche = f; appliquerFiltres(); },
+});
+masquerVides.addEventListener("change", appliquerFiltres);
+selStatut.addEventListener("change", () => { statutChoisi = selStatut.value; appliquerFiltres(); });
+
+/* Les valeurs autorisées de Satut vivent dans une colonne masquée de la
+ * feuille (source de la validation Excel), pas dans les cellules elles-mêmes. */
+function statutsPossibles() {
+  const data = store.sheet(F_CMD);
+  const cachees = data.headers.filter(h => /^col\d+$/.test(h));
+  const vues = [];
+  cachees.forEach(h => data.rows.forEach(r => {
+    const v = r[h];
+    if (rempli(v) && !vues.includes(String(v).trim())) vues.push(String(v).trim());
+  }));
+  data.rows.forEach(r => {
+    const v = r[C.statut];
+    if (rempli(v) && String(v).trim() !== "." && !vues.includes(String(v).trim())) vues.push(String(v).trim());
+  });
+  return vues.length ? vues : ["-", "En cours", "Livré"];
+}
+
+/* Liste de la feuille Paramètres : les entrées situées sous l'intitulé de la
+ * colonne, jusqu'à la ligne de consigne « Pour ajouter… ». */
+function listeParametre(colonne) {
+  const rows = store.sheet(F_PARAM).rows;
+  const out = { titre: "", items: [], note: "" };
+  let commence = false;
+  for (const r of rows) {
+    const v = r[colonne];
+    if (!rempli(v)) continue;
+    const s = String(v).trim();
+    if (!commence) { commence = true; out.titre = s; continue; }
+    if (/^Pour ajouter/i.test(s)) { out.note = s; break; }
+    out.items.push(s);
+  }
+  return out;
+}
+
+function majSelectStatut() {
+  const attendu = ["Tous", ...statutsPossibles()];
+  const actuel = [...selStatut.options].map(o => o.value);
+  if (actuel.join("|") === attendu.join("|")) return;
+  selStatut.textContent = "";
+  attendu.forEach(v => selStatut.appendChild(new Option(v, v)));
+  selStatut.value = attendu.includes(statutChoisi) ? statutChoisi : "Tous";
+  statutChoisi = selStatut.value;
+}
+
+/* ------------------------------------------------------- volet de détail
+ * Un volet par feuille, construit sur FieldInput : les dates passent par un
+ * sélecteur de date, les montants par un champ numérique (donc écrits comme
+ * nombres dans le fichier, pas comme texte), et les colonnes à liste par un
+ * menu déroulant alimenté par le fichier lui-même. La saisie est enregistrée
+ * champ par champ, dès qu'il est quitté.
+ */
+function construireVolet(cible, feuille, numLigne, champs, titre) {
+  const row = store.sheet(feuille).rows.find(r => r._row === numLigne);
+  if (!row) { cible.hidden = true; cible.textContent = ""; return false; }
+  cible.hidden = false;
+  cible.textContent = "";
+
+  const panel = el("div", "ss-panel");
+  const head = el("div", "detail-head");
+  const bloc = el("div");
+  bloc.appendChild(el("h2", "", titre));
+  bloc.appendChild(el("div", "ss-muted", "Ligne " + numLigne + " du fichier"));
+  const fermer = el("button", "ss-btn ss-btn-ghost", "Fermer");
+  fermer.onclick = () => { cible.hidden = true; cible.textContent = ""; };
+  head.append(bloc, fermer);
+  panel.appendChild(head);
+
+  const form = el("div", "ss-form");
+  champs.forEach(champ => {
+    const wrap = el("div", "ss-form-field");
+    wrap.appendChild(el("label", "ss-form-label", champ.label));
+    let options = [];
+    if (champ.type === "select") {
+      options = champ.options().slice();
+      const courant = rempli(row[champ.col]) ? String(row[champ.col]).trim() : "";
+      options.unshift("");
+      if (courant && !options.includes(courant)) options.splice(1, 0, courant);
+    }
+    FieldInput(wrap, {
+      type: champ.type,
+      value: row[champ.col],
+      options,
+      onChange: async v => {
+        if (String(v ?? "") === String(row[champ.col] ?? "")) return;
+        const valeur = champ.type === "number" && String(v).trim() !== "" ? nb(v) : v;
+        row[champ.col] = valeur;
+        await store.saveCell(feuille, numLigne, champ.col, valeur);
+      },
+    });
+    form.appendChild(wrap);
+  });
+  panel.appendChild(form);
+  cible.appendChild(panel);
+  return true;
+}
+
+const detailEl = document.getElementById("detail");
+let ligneOuverte = null;
+
+const CHAMPS = [
+  { col: C.date,        label: "Date Commande",           type: "date" },
+  { col: C.fournisseur, label: "Fournisseurs",            type: "select", options: () => listeParametre("col0").items },
+  { col: C.montant,     label: "Montant",                 type: "number" },
+  { col: C.livraison,   label: "Date de livraison",       type: "date" },
+  { col: C.regle,       label: "Montant réglé",           type: "number" },
+  { col: C.dateRegle,   label: "Date de règlement",       type: "date" },
+  { col: C.statut,      label: "Satut",                   type: "select", options: statutsPossibles },
+  { col: C.relance,     label: "Livraison à relancer ?",  type: "text" },
+  { col: C.autre,       label: "Autre critère à définir", type: "text" },
+];
+
+function fermerDetail() { ligneOuverte = null; detailEl.hidden = true; detailEl.textContent = ""; }
+
+function ouvrirDetail(numLigne) {
+  ligneOuverte = construireVolet(detailEl, F_CMD, numLigne, CHAMPS, "Détail de la commande")
+    ? numLigne : null;
+}
+
+/* Nouvelle commande : le classeur réserve un bloc de lignes déjà mises en
+ * forme. On ouvre la première encore vide plutôt que d'écrire sous le bloc,
+ * pour rester dans les plages que les formules du fichier couvrent. */
+let ouvrirDerniereAjoutee = false;
+document.getElementById("btn-nouvelle").onclick = async () => {
+  const rows = lignes(store.sheet(F_CMD).rows);
+  const libre = rows.find(r => !estSaisie(r));
+  if (libre) {
+    masquerVides.checked = false;
+    appliquerFiltres();
+    ouvrirDetail(libre._row);
+  } else {
+    const vides = {};
+    COLS_CMD.forEach(c => vides[c] = "");
+    await store.addRow(F_CMD, vides);
+    ouvrirDerniereAjoutee = true;
+  }
+};
+
+/* ------------------------------------------------- montants par fournisseur */
+const fournEl = document.getElementById("fournisseurs");
+function renderFournisseurs() {
+  const rows = commandes(store.sheet(F_CMD).rows);
+  const groupes = new Map();
+  rows.forEach(r => {
+    const cle = rempli(r[C.fournisseur]) ? String(r[C.fournisseur]).trim() : "Sans fournisseur";
+    const g = groupes.get(cle) || { commande: 0, regle: 0, n: 0 };
+    g.commande += nb(r[C.montant]);
+    g.regle += nb(r[C.regle]);
+    g.n += 1;
+    groupes.set(cle, g);
+  });
+  const total = [...groupes.values()].reduce((a, g) => a + g.commande, 0);
+  fournEl.textContent = "";
+  if (!groupes.size || total === 0) {
+    fournEl.appendChild(el("div", "ss-muted",
+      groupes.size ? "Aucun montant saisi pour l’instant." : "Aucune commande saisie pour l’instant."));
+    return;
+  }
+  [...groupes.entries()].sort((a, b) => b[1].commande - a[1].commande).forEach(([nom, g]) => {
+    const ligne = el("div", "fourn-row");
+    const gauche = el("div");
+    gauche.appendChild(el("div", "fourn-name", nom));
+    gauche.appendChild(el("div", "fourn-sub", g.n + (g.n > 1 ? " commandes" : " commande")));
+    const barre = el("div", "bar");
+    const part = g.commande > 0 ? Math.min(1, g.regle / g.commande) : 0;
+    const fill = el("span");
+    fill.style.width = (part * 100).toFixed(1) + "%";
+    barre.appendChild(fill);
+    const droite = el("div", "fourn-amounts");
+    droite.appendChild(el("div", "", EUR.format(g.regle) + " réglés"));
+    droite.appendChild(el("div", "fourn-sub", "sur " + EUR.format(g.commande)));
+    ligne.append(gauche, barre, droite);
+    fournEl.appendChild(ligne);
+  });
+}
+
+/* ------------------------------------------------------------------- Prix */
+const detailPrixEl = document.getElementById("detail-prix");
+const CHAMPS_PRIX = [
+  { col: P.fournisseur, label: "Fournisseurs",       type: "select", options: () => listeParametre("col5").items },
+  { col: P.produit,     label: "Produits",           type: "select", options: () => listeParametre("col0").items },
+  { col: P.achat,       label: "Prix d'achat",       type: "number" },
+  { col: P.frais,       label: "Frais de livraison", type: "number" },
+  { col: P.marge,       label: "Marge (%)",          type: "number" },
+];
+
+const gridPrix = DataGrid(document.getElementById("grid-prix"), store, {
+  sheet: F_PRIX,
+  columns: COLS_PRIX,
+  // Les colonnes chiffrées se saisissent dans le volet : une cellule éditable
+  // écrit du texte, et le fichier attend des nombres pour ses propres formules.
+  // Les deux colonnes de formule sont déjà en lecture seule côté composant.
+  editable: [],
+  pageSize: 50,
+  onRowClick: row => {
+    if (estSentinelle(row, COLS_PRIX)) return;
+    construireVolet(detailPrixEl, F_PRIX, row._row, CHAMPS_PRIX, "Détail du prix");
+  },
+});
+
+/* Écrire dans le classeur avec openpyxl efface les résultats que Excel avait
+ * mis en cache pour ses formules : Coût de revient et Prix de vente
+ * s'afficheraient vides dès la première modification. Les deux formules du
+ * fichier étant de simple arithmétique sur des colonnes voisines, on les
+ * recalcule à l'affichage, ligne par ligne, sans jamais toucher aux formules
+ * elles-mêmes dans le fichier. */
+(function recalculerPrix(root) {
+  const iA = COLS_PRIX.indexOf(P.achat), iF = COLS_PRIX.indexOf(P.frais), iM = COLS_PRIX.indexOf(P.marge);
+  const iC = COLS_PRIX.indexOf(P.cout), iV = COLS_PRIX.indexOf(P.vente);
+  const apply = () => root.querySelectorAll("tbody tr").forEach(tr => {
+    const tds = tr.children;
+    if (tds.length <= iV) return;
+    const brut = i => String(tds[i].textContent).trim();
+    if ([iA, iF, iM].some(i => brut(i) === ".")) return; // ligne « . » de bas de feuille
+    const cout = nb(brut(iA)) + nb(brut(iF));
+    const vente = cout * (1 + nb(brut(iM)));
+    const poser = (i, valeur) => { if (tds[i].textContent !== valeur) tds[i].textContent = valeur; };
+    poser(iC, EUR.format(cout));
+    poser(iV, EUR.format(vente));
+  });
+  new MutationObserver(apply).observe(root, { childList: true, subtree: true, characterData: true });
+  apply();
+})(gridPrix.el);
+
+/* ------------------------------------------------------------- Paramètres */
+function renderParametres() {
+  const produits = listeParametre("col0");
+  const fournisseurs = listeParametre("col5");
+  const remplir = (ulId, noteId, liste) => {
+    const ul = document.getElementById(ulId);
+    ul.textContent = "";
+    if (!liste.items.length) ul.appendChild(el("li", "ss-muted", "Liste vide."));
+    liste.items.forEach(v => ul.appendChild(el("li", "", v)));
+    document.getElementById(noteId).textContent = liste.note;
+  };
+  remplir("liste-produits", "note-produits", produits);
+  remplir("liste-fournisseurs", "note-fournisseurs", fournisseurs);
+}
+
+/* ------------------------------------------------------------------ onglets */
+const vues = { "Commandes": "view-Commandes", "Prix": "view-Prix", "Paramètres": "view-Parametres" };
+Tabs(document.getElementById("tabs"), Object.keys(vues), {
+  active: "Commandes",
+  onSelect: nom => {
+    Object.values(vues).forEach(id => document.getElementById(id).hidden = true);
+    document.getElementById(vues[nom]).hidden = false;
+  },
+});
+
+/* ------------------------------------------------------------ mise à jour */
+store.subscribe(() => {
+  majSelectStatut();
+  renderFournisseurs();
+  renderParametres();
+  if (ouvrirDerniereAjoutee) {
+    const libres = lignes(store.sheet(F_CMD).rows).filter(r => !estSaisie(r));
+    if (libres.length) { ouvrirDerniereAjoutee = false; ouvrirDetail(libres[libres.length - 1]._row); }
+  }
+  // Le volet resterait ouvert sur une ligne supprimée depuis Excel.
+  if (ligneOuverte !== null && !store.sheet(F_CMD).rows.some(r => r._row === ligneOuverte)) fermerDetail();
+});
+
+appliquerFiltres();
+store.start();
+</script>
+</body>
+</html>

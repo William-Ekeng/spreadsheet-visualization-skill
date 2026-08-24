@@ -85,7 +85,11 @@
    rather than shadcn/ui's raw oklch(0.145 0 0)/oklch(0.985 0 0), which is
    true black on true white and reads as higher-glare at scale, especially
    on OLED. Only the surface and text tokens differ from light; shadows are
-   shared. Themes define their own dark values. */
+   shared.
+
+   Themes do NOT inherit any of this: a theme file's own :root wins, and
+   none of the five shipped themes defines a dark variant, so a themed page
+   keeps its single look whatever the OS is set to. See references/theming.md. */
 [data-theme="dark"] {
   --ss-bg: #121212;
   --ss-panel: #1e1e1e;
@@ -111,6 +115,72 @@
   --ss-chart-3: #199e70;
   --ss-chart-4: #c98500;
   --ss-chart-5: #d55181;
+  --ss-chart-6: #008300;
+}
+
+/* Follow the OS setting when the page hasn't chosen for itself.
+   Deliberately a plain :root, not :root:not([data-theme="light"]): the
+   :not() form scores higher than a theme file's own :root and would leak
+   these dark tokens into every themed page. At this specificity a theme,
+   loaded after base.css, still wins. The [data-theme="light"] block below
+   comes later in this file, so an explicit light choice beats the media
+   query while still losing to a theme. */
+@media (prefers-color-scheme: dark) {
+  :root {
+  --ss-bg: #121212;
+  --ss-panel: #1e1e1e;
+  --ss-border: rgba(255, 255, 255, 0.1);
+  --ss-text: #e8e8e8;
+  --ss-muted: #b3b3b3;
+  --ss-accent: #7c93f5;
+  --ss-accent-bg: #1b2337;
+  --ss-danger: #f87171;
+  --ss-warn: #d97706;
+  --ss-formula-bg: #2a2417;
+  --ss-th-bg: #1a1a1a;
+
+  --ss-badge-blue: #60a5fa;
+  --ss-badge-amber: #d9a05b;
+  --ss-badge-purple: #b18af8;
+  --ss-badge-green: #4ade80;
+  --ss-badge-red: #f87171;
+  --ss-badge-gray: #b3b3b3;
+
+  --ss-chart-1: #3987e5;
+  --ss-chart-2: #d95926;
+  --ss-chart-3: #199e70;
+  --ss-chart-4: #c98500;
+  --ss-chart-5: #d55181;
+  --ss-chart-6: #008300;
+  }
+}
+
+/* Lets a page force light while the OS is dark. Only the tokens the
+   dark block above overrides need restating; typography, shape, density
+   and motion never differ between the two. */
+[data-theme="light"] {
+  --ss-bg: #fafafa;
+  --ss-panel: #ffffff;
+  --ss-border: #e5e5e5;
+  --ss-text: #0a0a0a;
+  --ss-muted: #737373;
+  --ss-accent: #2563eb;
+  --ss-accent-bg: #eff4ff;
+  --ss-danger: #dc2626;
+  --ss-warn: #b45309;
+  --ss-formula-bg: #fdf6e3;
+  --ss-th-bg: #f5f5f5;
+  --ss-badge-blue: #1d4ed8;
+  --ss-badge-amber: #92400e;
+  --ss-badge-purple: #6d28d9;
+  --ss-badge-green: #15803d;
+  --ss-badge-red: #b91c1c;
+  --ss-badge-gray: #737373;
+  --ss-chart-1: #2a78d6;
+  --ss-chart-2: #eb6834;
+  --ss-chart-3: #1baf7a;
+  --ss-chart-4: #eda100;
+  --ss-chart-5: #e87ba4;
   --ss-chart-6: #008300;
 }
 
@@ -156,6 +226,25 @@ h1 { font-size: 20px; margin: 0 0 4px; }
 h2 { font-size: 16px; margin: 0 0 8px; }
 
 code, .ss-code { font-family: var(--ss-font-mono); font-size: 13px; }
+
+/* ---- First paint ----
+ * SheetStore mounts .ss-loading before its first request and removes it
+ * when data lands. Centred and unobtrusive: it says "working", not
+ * "something went wrong". Fades in only after a short delay so a fast
+ * local read never flashes it.
+ */
+.ss-loading {
+  position: fixed; inset: 0; display: flex;
+  align-items: center; justify-content: center;
+  background: var(--ss-bg); color: var(--ss-muted);
+  font-family: var(--ss-font-body); font-size: var(--ss-font-size);
+  z-index: 9999;
+  opacity: 0; animation: ss-loading-in 0.2s ease-out 0.35s forwards;
+}
+@keyframes ss-loading-in { to { opacity: 1; } }
+@media (prefers-reduced-motion: reduce) {
+  .ss-loading { animation: none; opacity: 1; }
+}
 
 /* ---- layout helpers (compose freely) ---- */
 
@@ -314,7 +403,10 @@ textarea.ss-input {
 
 .ss-btn {
   display: inline-flex; align-items: center; justify-content: center; gap: 6px;
-  height: 38px; padding: 0 18px; box-sizing: border-box;
+  /* Same 36px as .ss-input/.ss-search/select.ss-input. A control bar
+     puts them side by side constantly, and a 2px difference reads as a
+     misalignment even when nobody can name it. */
+  height: 36px; padding: 0 18px; box-sizing: border-box;
   border: var(--ss-border-w) solid var(--ss-border); background: var(--ss-panel); color: var(--ss-text);
   border-radius: var(--ss-radius-sm); cursor: pointer; font-size: 13px; font-weight: 600;
   font-family: var(--ss-font-body);
@@ -333,7 +425,7 @@ textarea.ss-input {
 }
 .ss-btn:disabled { opacity: 0.4; cursor: default; pointer-events: none; }
 
-.ss-btn-icon { width: 38px; padding: 0; }
+.ss-btn-icon { width: 36px; padding: 0; }
 .ss-btn-icon svg { width: 16px; height: 16px; }
 
 .ss-btn-primary { background: var(--ss-text); border-color: var(--ss-text); color: var(--ss-bg); }

@@ -1,0 +1,578 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Suivi des commandes</title>
+<link rel="stylesheet" href="base.css">
+<script src="sheetsync.js"></script>
+<script src="components.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
+<style>
+  .page { max-width: 1200px; margin: 0 auto; }
+  .app-head { align-items: center; justify-content: space-between; }
+  .app-head > * { flex: 0 0 auto; }
+  .lede { margin: 0; }
+
+  /* One control bar per data region: everything sized to content so the
+     row stays a bar instead of collapsing into full-width bands. */
+  .bar { align-items: center; margin-bottom: var(--ss-gap); }
+  .bar > * { flex: 0 0 auto; }
+  .bar .search { flex: 0 1 230px; }
+  .bar select.ss-input { width: 165px; }
+  .switch-field { display: flex; align-items: center; gap: calc(var(--ss-gap) / 2); min-height: 36px; }
+
+  .work { align-items: flex-start; }
+  .work > .main { flex: 1 1 560px; }
+  .work > .detail { flex: 0 0 360px; }
+  .work > .detail:empty { display: none; }
+
+  .detail-head { display: flex; align-items: center; justify-content: space-between; gap: calc(var(--ss-gap) / 2); margin-bottom: var(--ss-gap); }
+  .detail-head h2 { margin: 0; }
+  .ro-value { font-weight: 500; }
+  .field-hint { margin: 0; }
+
+  /* The file spells the first header across two lines; keep the break, and
+     give the columns a floor so a narrow panel scrolls the table sideways
+     instead of crushing that header into a column of single words. */
+  .ss-table th { white-space: pre-line; max-width: 240px; min-width: 96px; vertical-align: bottom; }
+  #grid-commandes .ss-table th:first-child { min-width: 170px; }
+  .ss-form-label { white-space: pre-line; }
+
+  .note { margin: var(--ss-gap) 0 0; }
+  .empty { margin: 0; }
+  .param-note { margin: calc(var(--ss-gap) / 2) 0 0; }
+</style>
+</head>
+<body>
+
+<div class="page ss-stack">
+
+  <div class="ss-row app-head">
+    <div>
+      <h1>Suivi des commandes</h1>
+      <p class="ss-muted lede">Suivi_des_commandes.xlsx &middot; chaque modification est écrite directement dans le fichier.</p>
+    </div>
+    <div id="status"></div>
+  </div>
+
+  <div id="tabs"></div>
+
+  <!-- Commandes ------------------------------------------------------- -->
+  <section id="view-commandes" class="ss-stack">
+
+    <div class="ss-row" id="tiles"></div>
+
+    <div class="ss-row work">
+      <div class="main ss-panel">
+        <div class="ss-row bar">
+          <div class="search" id="search-commandes"></div>
+          <label class="ss-form-label" for="filtre-statut">Statut</label>
+          <select class="ss-input" id="filtre-statut"></select>
+          <span class="switch-field">
+            <label class="ss-form-label" for="masquer-vides">Masquer les lignes vides</label>
+            <span id="masquer-vides-host"></span>
+          </span>
+        </div>
+        <div id="grid-commandes"></div>
+        <p class="ss-muted empty" id="empty-commandes" hidden></p>
+        <p class="ss-muted note">
+          Cliquez sur une ligne pour la modifier dans le panneau de droite&nbsp;: le tableau
+          est en lecture seule, la saisie se fait dans le formulaire. Les lignes vides sont les
+          lignes réservées du modèle, prêtes à recevoir une commande.
+        </p>
+      </div>
+      <aside class="detail" id="detail-commandes"></aside>
+    </div>
+
+    <div class="ss-panel">
+      <h2>Montant commandé par fournisseur</h2>
+      <p class="ss-muted empty" id="empty-chart" hidden></p>
+      <div id="chart"></div>
+    </div>
+
+  </section>
+
+  <!-- Prix ------------------------------------------------------------ -->
+  <section id="view-prix" class="ss-stack" hidden>
+    <div class="ss-row work">
+      <div class="main ss-panel">
+        <div class="ss-row bar">
+          <div class="search" id="search-prix"></div>
+        </div>
+        <div id="grid-prix"></div>
+        <p class="ss-muted note">
+          Cliquez sur une ligne pour modifier le prix d'achat, les frais et la marge.
+          « Coût de revient » et « Prix de vente » sont calculés par le fichier&nbsp;: ils sont
+          en lecture seule et s'affichent «&nbsp;—&nbsp;» tant qu'Excel ne les a pas recalculés.
+        </p>
+      </div>
+      <aside class="detail" id="detail-prix"></aside>
+    </div>
+  </section>
+
+  <div id="parametres"></div>
+
+</div>
+
+<script>
+/* ---------------------------------------------------------------- Langue
+ * Le classeur est en français, donc toute l'interface l'est aussi, y
+ * compris les libellés par défaut du kit. Les noms de colonnes restent
+ * ceux du fichier (« Satut » compris).
+ */
+const t = {
+  connected: "connecté",
+  reconnecting: "reconnexion…",
+  searchCommandes: "Rechercher une commande…",
+  searchPrix: "Rechercher un produit…",
+  allStatus: "Tous les statuts",
+  close: "Fermer",
+  detailCommande: "Commande",
+  detailPrix: "Ligne de prix",
+  range: (from, to, total) => `${from}–${to} sur ${total}`,
+  matches: n => `${n} ligne${n === 1 ? "" : "s"}`,
+  noRows: "Aucune ligne à afficher. Décochez « Masquer les lignes vides » pour saisir une commande.",
+  noOrders: "Aucun montant saisi pour l'instant : le graphique se remplira dès la première commande.",
+  computed: "Calculé par le fichier, recalculé à l'ouverture dans Excel.",
+  pendingCalc: "—",
+  percentHint: "En pourcentage : saisissez 20 pour 20 %.",
+  saveFailed: "Enregistrement impossible. Fermez le fichier dans Excel, puis réessayez.",
+  parametres: "Paramètres du fichier",
+  parametresSub: "Listes utilisées par les menus déroulants",
+  produits: "Produits",
+  fournisseurs: "Fournisseurs",
+};
+
+const SH_PARAM = "Paramètres", SH_CMD = "Commandes", SH_PRIX = "Prix";
+
+const C = {
+  date: 'Date Commande\n(touche Ctrl + ";" pour inscrire la date facilement)',
+  fournisseur: "Fournisseurs",
+  montant: "Montant",
+  livraison: "Date de livraison",
+  regle: "Montant réglé",
+  reglement: "Date de règlement",
+  autre: "Autre critère à définir",
+  statut: "Satut",
+  relance: "Livraison à relancer ?",
+};
+const CMD_COLS = [C.date, C.fournisseur, C.montant, C.livraison, C.regle, C.reglement, C.autre, C.statut, C.relance];
+
+const P = {
+  fournisseur: "Fournisseurs",
+  produit: "Produits",
+  achat: "Prix d'achat",
+  frais: "Frais de livraison",
+  cout: "Coût de revient",
+  marge: "Marge (%)",
+  vente: "Prix de vente",
+};
+const PRIX_COLS = [P.fournisseur, P.produit, P.achat, P.frais, P.cout, P.marge, P.vente];
+
+/* --------------------------------------------------------------- Formats */
+const eur = new Intl.NumberFormat("fr-FR", { style: "currency", currency: "EUR" });
+const pct = new Intl.NumberFormat("fr-FR", { style: "percent", maximumFractionDigits: 2 });
+
+const isBlank = v => v === null || v === undefined || String(v).trim() === "";
+/* Une cellule de formule perd sa valeur mise en cache dès que le fichier
+   est réenregistré hors d'Excel : le serveur renvoie alors la formule
+   elle-même. On l'affiche comme « en attente de calcul » plutôt que de
+   montrer « =C5+D5 » ou une case vide. */
+const isFormulaValue = v => typeof v === "string" && v.trim().startsWith("=");
+const fmtMoney = v => isFormulaValue(v) ? t.pendingCalc : (isBlank(v) || isNaN(Number(v))) ? "" : eur.format(Number(v));
+const fmtPercent = v => isFormulaValue(v) ? t.pendingCalc : (isBlank(v) || isNaN(Number(v))) ? "" : pct.format(Number(v));
+/* Colonnes portant toujours une formule : une valeur vide veut dire « pas
+   encore recalculée », pas « pas de montant ». */
+const fmtComputed = v => isBlank(v) ? t.pendingCalc : fmtMoney(v);
+
+/* Le serveur renvoie les dates du xlsx en RFC1123 (UTC) et les dates
+   écrites depuis cette page en ISO : les deux se lisent en UTC, donc on
+   formate avec les getters UTC pour ne pas décaler d'un jour. */
+function asDate(v) {
+  if (isBlank(v)) return null;
+  const d = new Date(v);
+  return isNaN(d.getTime()) ? null : d;
+}
+function fmtDate(v) {
+  const d = asDate(v);
+  if (!d) return isBlank(v) ? "" : String(v);
+  const p = n => String(n).padStart(2, "0");
+  return `${p(d.getUTCDate())}/${p(d.getUTCMonth() + 1)}/${d.getUTCFullYear()}`;
+}
+function toDateInput(v) {
+  const d = asDate(v);
+  if (!d) return "";
+  const p = n => String(n).padStart(2, "0");
+  return `${d.getUTCFullYear()}-${p(d.getUTCMonth() + 1)}-${p(d.getUTCDate())}`;
+}
+/* Numéro de série Excel : la colonne « Date Commande » est une vraie
+   cellule date dans le fichier, donc on y écrit un nombre pour qu'Excel
+   la reconnaisse comme date. Les deux autres colonnes de date portent un
+   format monétaire dans le modèle : un numéro de série y afficherait des
+   euros, on y écrit donc le texte ISO. */
+const toSerial = iso => Math.round(Date.parse(iso + "T00:00:00Z") / 86400000) + 25569;
+
+/* ----------------------------------------------------------------- Store */
+const store = new SheetStore();
+
+const isJunkRow = (row, cols) => cols.some(c => String(row[c] ?? "").trim() === ".");
+const isEmptyOrder = row => isBlank(row[C.date]) && isBlank(row[C.fournisseur]) && !Number(row[C.montant]);
+/* Pour le graphique : une commande n'a de montant à comparer qu'à partir
+   du moment où il est saisi. Les lignes réservées à 0 € n'y apportent
+   qu'une barre vide. */
+const isRealOrder = row => !isJunkRow(row, CMD_COLS) && Number(row[C.montant]) > 0;
+
+/* Les blocs agrégés (tuiles, graphique) ne doivent pas compter les lignes
+   de séparation « . » du modèle ni les lignes réservées vides. StatTile et
+   ChartBlock n'utilisent que sheet()/subscribe(), donc une petite vue
+   filtrée du store suffit. */
+function viewStore(pred) {
+  return {
+    sheet(name) {
+      const d = store.sheet(name);
+      return { ...d, rows: d.rows.filter(r => pred(name, r)) };
+    },
+    subscribe(fn) { return store.subscribe(fn); },
+  };
+}
+const cleanStore = viewStore((name, r) => !isJunkRow(r, name === SH_PRIX ? PRIX_COLS : CMD_COLS));
+const ordersStore = viewStore((name, r) => isRealOrder(r));
+
+const paramList = key => store.sheet(SH_PARAM).rows
+  .filter(r => r._row >= 4 && r._row <= 7 && !isBlank(r[key]))
+  .map(r => String(r[key]));
+/* La liste de validation de « Satut » vit dans une colonne masquée du
+   même onglet (P5:P7 dans le fichier). */
+const statutOptions = () => columnValues(store.sheet(SH_CMD), "col15");
+
+/* ------------------------------------------------------------ En-tête */
+StatusDot(document.getElementById("status"), store, {
+  labels: { connected: t.connected, reconnecting: t.reconnecting },
+});
+
+/* ------------------------------------------------------------- Tuiles */
+const tilesHost = document.getElementById("tiles");
+const sumCol = col => rows => rows.reduce((a, r) => a + (Number(r[col]) || 0), 0);
+const tiles = [
+  StatTile(tilesHost, cleanStore, { label: "Montant commandé", sheet: SH_CMD, compute: sumCol(C.montant), format: fmtMoney }),
+  StatTile(tilesHost, cleanStore, { label: "Montant réglé", sheet: SH_CMD, compute: sumCol(C.regle), format: fmtMoney }),
+  StatTile(tilesHost, cleanStore, {
+    label: "Reste à régler", sheet: SH_CMD,
+    compute: rows => sumCol(C.montant)(rows) - sumCol(C.regle)(rows),
+    format: fmtMoney,
+  }),
+];
+
+/* -------------------------------------------------- Panneau de détail */
+function openDetail(host, sheet, row, fields, title) {
+  host.textContent = "";
+
+  const panel = document.createElement("div");
+  panel.className = "ss-panel";
+
+  const head = document.createElement("div");
+  head.className = "detail-head";
+  const h = document.createElement("h2");
+  h.textContent = title;
+  const closeBtn = document.createElement("button");
+  closeBtn.className = "ss-btn";
+  closeBtn.type = "button";
+  closeBtn.textContent = t.close;
+  closeBtn.onclick = () => { host.textContent = ""; };
+  head.append(h, closeBtn);
+  panel.appendChild(head);
+
+  const form = document.createElement("div");
+  form.className = "ss-form";
+  panel.appendChild(form);
+
+  const error = document.createElement("p");
+  error.className = "ss-muted field-hint";
+  error.hidden = true;
+  panel.appendChild(error);
+
+  const readonlyRefreshers = [];
+
+  fields.forEach((f, i) => {
+    const wrap = document.createElement("div");
+    wrap.className = "ss-form-field";
+    const id = `champ-${i}`;
+    const label = document.createElement("label");
+    label.className = "ss-form-label";
+    label.htmlFor = id;
+    label.textContent = f.col;
+    wrap.appendChild(label);
+
+    const calculated = f.readonly || store.isFormulaCell(sheet, row._row, f.col);
+
+    if (calculated) {
+      const value = document.createElement("output");
+      value.className = "ro-value";
+      value.id = id;
+      value.textContent = (f.format || (v => String(v ?? "")))(row[f.col]);
+      wrap.appendChild(value);
+      const hint = document.createElement("p");
+      hint.className = "ss-muted field-hint";
+      hint.textContent = t.computed;
+      wrap.appendChild(hint);
+      readonlyRefreshers.push(fresh => {
+        value.textContent = (f.format || (v => String(v ?? "")))(fresh[f.col]);
+      });
+    } else {
+      const raw = row[f.col];
+      const value = f.type === "date" ? toDateInput(raw)
+        : f.type === "percent" ? (isBlank(raw) ? "" : String(Number(raw) * 100))
+        : (raw ?? "");
+      const input = FieldInput(wrap, {
+        type: f.type === "percent" ? "number" : f.type,
+        value,
+        options: f.options ? ["", ...f.options] : [],
+        onChange: async v => {
+          let out;
+          if (f.type === "number") out = isBlank(v) ? "" : Number(v);
+          else if (f.type === "percent") out = isBlank(v) ? "" : Number(v) / 100;
+          else if (f.type === "date") out = isBlank(v) ? "" : (f.write === "serial" ? toSerial(v) : v);
+          else out = v;
+          if (String(out) === String(row[f.col] ?? "")) return;
+          try {
+            await store.saveCell(sheet, row._row, f.col, out);
+            row[f.col] = out;
+            error.hidden = true;
+          } catch (e) {
+            error.textContent = t.saveFailed;
+            error.hidden = false;
+          }
+        },
+      });
+      input.el.id = id;
+      if (f.type === "percent") {
+        const hint = document.createElement("p");
+        hint.className = "ss-muted field-hint";
+        hint.textContent = t.percentHint;
+        wrap.appendChild(hint);
+      }
+    }
+    form.appendChild(wrap);
+  });
+
+  host.appendChild(panel);
+
+  /* Les colonnes calculées bougent quand le fichier est réenregistré :
+     on les rafraîchit tant que le panneau est ouvert. */
+  if (readonlyRefreshers.length) {
+    const unsub = store.subscribe(() => {
+      if (!panel.isConnected) { unsub(); return; }
+      const fresh = store.sheet(sheet).rows.find(r => r._row === row._row);
+      if (fresh) readonlyRefreshers.forEach(fn => fn(fresh));
+    });
+  }
+}
+
+const cmdFields = () => [
+  { col: C.date, type: "date", write: "serial" },
+  { col: C.fournisseur, type: "text" },
+  { col: C.montant, type: "number" },
+  { col: C.livraison, type: "date" },
+  { col: C.regle, type: "number" },
+  { col: C.reglement, type: "date" },
+  { col: C.autre, type: "text" },
+  { col: C.statut, type: "select", options: statutOptions() },
+  { col: C.relance, type: "text" },
+];
+
+const prixFields = () => [
+  { col: P.fournisseur, type: "select", options: paramList("col5") },
+  { col: P.produit, type: "select", options: paramList("col0") },
+  { col: P.achat, type: "number" },
+  { col: P.frais, type: "number" },
+  { col: P.cout, readonly: true, format: fmtComputed },
+  { col: P.marge, type: "percent" },
+  { col: P.vente, readonly: true, format: fmtComputed },
+];
+
+/* --------------------------------------------------- Tableau Commandes */
+const detailCmd = document.getElementById("detail-commandes");
+const emptyCmd = document.getElementById("empty-commandes");
+
+const gridCmd = DataGrid(document.getElementById("grid-commandes"), store, {
+  sheet: SH_CMD,
+  columns: CMD_COLS,
+  editable: false,
+  onRowClick: row => openDetail(detailCmd, SH_CMD, row, cmdFields(), t.detailCommande),
+  format: {
+    [C.date]: fmtDate,
+    [C.livraison]: fmtDate,
+    [C.reglement]: fmtDate,
+    [C.montant]: fmtMoney,
+    [C.regle]: fmtMoney,
+  },
+  labels: { range: t.range, matches: t.matches },
+});
+
+let searchCmd = null, statutChoisi = "", masquerVides = false;
+
+function cmdPredicate(row) {
+  if (isJunkRow(row, CMD_COLS)) return false;
+  if (statutChoisi && String(row[C.statut] ?? "") !== statutChoisi) return false;
+  if (masquerVides && isEmptyOrder(row)) return false;
+  if (searchCmd && !searchCmd(row)) return false;
+  return true;
+}
+function applyCmd() {
+  gridCmd.setFilter(cmdPredicate);
+  const n = store.sheet(SH_CMD).rows.filter(cmdPredicate).length;
+  emptyCmd.textContent = t.noRows;
+  emptyCmd.hidden = n > 0;
+}
+
+SearchBox(document.getElementById("search-commandes"), {
+  placeholder: t.searchCommandes,
+  columns: CMD_COLS,
+  onChange: f => { searchCmd = f; applyCmd(); },
+});
+
+const statutSelect = document.getElementById("filtre-statut");
+function fillStatutSelect() {
+  const options = statutOptions();
+  statutSelect.textContent = "";
+  statutSelect.appendChild(new Option(t.allStatus, ""));
+  options.forEach(v => statutSelect.appendChild(new Option(v, v)));
+  statutSelect.value = statutChoisi;
+}
+statutSelect.onchange = () => { statutChoisi = statutSelect.value; applyCmd(); };
+
+FieldInput(document.getElementById("masquer-vides-host"), {
+  type: "checkbox",
+  value: "No",
+  onChange: v => { masquerVides = v === "Yes"; applyCmd(); },
+}).el.id = "masquer-vides";
+
+/* -------------------------------------------------------- Tableau Prix */
+const detailPrix = document.getElementById("detail-prix");
+
+const gridPrix = DataGrid(document.getElementById("grid-prix"), store, {
+  sheet: SH_PRIX,
+  columns: PRIX_COLS,
+  editable: false,
+  onRowClick: row => openDetail(detailPrix, SH_PRIX, row, prixFields(), t.detailPrix),
+  format: {
+    [P.achat]: fmtMoney,
+    [P.frais]: fmtMoney,
+    [P.cout]: fmtComputed,
+    [P.vente]: fmtComputed,
+    [P.marge]: fmtPercent,
+  },
+  labels: { range: t.range, matches: t.matches },
+});
+
+let searchPrix = null;
+function prixPredicate(row) {
+  if (isJunkRow(row, PRIX_COLS)) return false;
+  if (searchPrix && !searchPrix(row)) return false;
+  return true;
+}
+gridPrix.setFilter(prixPredicate);
+
+SearchBox(document.getElementById("search-prix"), {
+  placeholder: t.searchPrix,
+  columns: PRIX_COLS,
+  onChange: f => { searchPrix = f; gridPrix.setFilter(prixPredicate); },
+});
+
+/* ---------------------------------------------------------- Graphique */
+const chart = ChartBlock(document.getElementById("chart"), ordersStore, {
+  sheet: SH_CMD,
+  x: C.fournisseur,
+  y: C.montant,
+  type: "bar",
+  aggregate: "sum",
+  label: C.montant,
+});
+const emptyChart = document.getElementById("empty-chart");
+function refreshChartState() {
+  const n = ordersStore.sheet(SH_CMD).rows.length;
+  emptyChart.textContent = t.noOrders;
+  emptyChart.hidden = n > 0;
+  chart.el.hidden = n === 0;
+}
+
+/* -------------------------------------------------------- Paramètres */
+const parametres = Collapsible(document.getElementById("parametres"), {
+  title: t.parametres,
+  subtitle: t.parametresSub,
+  content: body => {
+    const render = () => {
+      body.textContent = "";
+      const table = document.createElement("table");
+      table.className = "ss-facts";
+      const thead = document.createElement("thead");
+      const hr = document.createElement("tr");
+      [t.produits, t.fournisseurs].forEach(label => {
+        const th = document.createElement("th");
+        th.textContent = label;
+        hr.appendChild(th);
+      });
+      thead.appendChild(hr);
+      table.appendChild(thead);
+      const tbody = document.createElement("tbody");
+      const produits = paramList("col0"), fournisseurs = paramList("col5");
+      for (let i = 0; i < Math.max(produits.length, fournisseurs.length); i++) {
+        const tr = document.createElement("tr");
+        [produits[i], fournisseurs[i]].forEach(v => {
+          const td = document.createElement("td");
+          if (v !== undefined) {
+            const code = document.createElement("code");
+            code.textContent = v;
+            td.appendChild(code);
+          }
+          tr.appendChild(td);
+        });
+        tbody.appendChild(tr);
+      }
+      table.appendChild(tbody);
+      body.appendChild(table);
+
+      /* Le fichier porte sa propre consigne d'entretien : on l'affiche
+         telle quelle plutôt que d'en inventer une. */
+      const notes = store.sheet(SH_PARAM).rows.filter(r => r._row === 8);
+      notes.forEach(r => {
+        [r.col0, r.col5].forEach(text => {
+          if (isBlank(text)) return;
+          const p = document.createElement("p");
+          p.className = "ss-muted param-note";
+          p.textContent = String(text);
+          body.appendChild(p);
+        });
+      });
+    };
+    render();
+    store.subscribe(render);
+  },
+});
+
+/* ---------------------------------------------------------------- Vues */
+const viewCmd = document.getElementById("view-commandes");
+const viewPrix = document.getElementById("view-prix");
+Tabs(document.getElementById("tabs"), [SH_CMD, SH_PRIX], {
+  active: SH_CMD,
+  onSelect: name => {
+    viewCmd.hidden = name !== SH_CMD;
+    viewPrix.hidden = name !== SH_PRIX;
+    if (name === SH_CMD) chart.refresh();
+  },
+});
+
+/* Les blocs se construisent avant l'arrivée des données : on remplit les
+   listes déroulantes et les états vides dès le premier payload, puis à
+   chaque changement du fichier. */
+store.subscribe(() => {
+  fillStatutSelect();
+  applyCmd();
+  refreshChartState();
+});
+
+store.start();
+</script>
+</body>
+</html>

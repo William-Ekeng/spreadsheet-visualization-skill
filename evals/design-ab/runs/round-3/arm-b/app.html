@@ -1,0 +1,290 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Suivi des commandes</title>
+<link rel="stylesheet" href="base.css">
+<script src="sheetsync.js"></script>
+<script src="components.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<style>
+  /* Page shell only. Every color, font, radius and spacing value comes
+     from the --ss-* token contract in base.css. */
+  .page { max-width: 1200px; margin: 0 auto; }
+  .page-head { align-items: center; justify-content: space-between; }
+
+  /* One control row per data region, sized to content: a stretched
+     control degenerates the bar back into a full-width band. */
+  .controls { align-items: center; }
+  .ctl-search { flex: 0 0 280px; max-width: 280px; }
+  .ctl-filter { flex: 0 0 auto; display: flex; align-items: center; gap: 8px; }
+  .ctl-filter select { width: 160px; }
+
+  /* The order sheet's first header carries an in-cell instruction to the
+     Excel user ("touche Ctrl + ;"). Left on one line it would push the
+     table several screens wide, so headers wrap inside a capped column. */
+  .ss-table th { white-space: normal; max-width: 220px; }
+
+  /* A record form is not a table: it does not earn the full width. */
+  .detail { max-width: 560px; }
+  .detail-head { align-items: center; justify-content: space-between; }
+
+  .page-note { max-width: 65ch; }
+</style>
+</head>
+<body>
+
+<div class="page ss-stack">
+
+  <div class="ss-row page-head">
+    <h1 class="ss-shrink">Suivi des commandes</h1>
+    <div class="ss-shrink" id="status"></div>
+  </div>
+
+  <div id="tabs"></div>
+
+  <!-- Commandes: the app's reason to exist, so it loads first and leads. -->
+  <section id="view-commandes" class="ss-stack">
+
+    <div class="ss-row" id="tiles"></div>
+
+    <div class="ss-panel ss-stack">
+      <div class="ss-row controls">
+        <div class="ctl-search" id="search"></div>
+        <label class="ctl-filter">
+          <span class="ss-form-label">Satut</span>
+          <select class="ss-input" id="statut"></select>
+        </label>
+      </div>
+      <div id="grid-commandes"></div>
+    </div>
+
+    <div class="detail ss-stack" id="detail" hidden></div>
+
+    <section class="ss-panel">
+      <h2>Montant commandé par fournisseur</h2>
+      <div id="chart"></div>
+    </section>
+
+  </section>
+
+  <!-- Prix: the price list behind the orders. Cost and sale price are
+       workbook formulas, so they stay read-only on their own. -->
+  <section id="view-prix" hidden>
+    <div id="grid-prix"></div>
+  </section>
+
+  <p class="ss-muted page-note">
+    Edits save straight into Suivi_des_commandes.xlsx. Close the workbook in
+    Excel first, or writes will fail while Excel holds the file.
+  </p>
+
+</div>
+
+<script>
+const SHEET_CMD = "Commandes";
+const SHEET_PRIX = "Prix";
+
+/* Header strings exactly as the workbook spells them, misspelling
+   ("Satut") and in-cell instruction included. */
+const C_DATE = 'Date Commande\n(touche Ctrl + ";" pour inscrire la date facilement)';
+const C_FOURN = "Fournisseurs";
+const C_MONTANT = "Montant";
+const C_LIVR = "Date de livraison";
+const C_REGLE = "Montant réglé";
+const C_DATE_REG = "Date de réglement";
+const C_AUTRE = "Autre critère à définir";
+const C_STATUT = "Satut";
+const C_RELANCE = "Livraison à relancer ?";
+
+const CMD_COLS = [C_DATE, C_FOURN, C_MONTANT, C_LIVR, C_REGLE, C_DATE_REG, C_AUTRE, C_STATUT, C_RELANCE];
+const PRIX_COLS = ["Fournisseurs", "Produits", "Prix d'achat", "Frais de livraison", "Coût de revient", "Marge (%)", "Prix de vente"];
+
+/* --- formatting -------------------------------------------------------- */
+
+const eur = new Intl.NumberFormat("fr-FR", { style: "currency", currency: "EUR" });
+const dmy = new Intl.DateTimeFormat("fr-FR", { day: "2-digit", month: "2-digit", year: "numeric" });
+const blank = v => v === null || v === undefined || String(v).trim() === "";
+
+/* Anything that isn't a number is shown as it sits in the cell rather than
+   as NaN: this template ships sentinel "." rows. */
+const money = v => blank(v) || isNaN(Number(v)) ? (blank(v) ? "" : String(v)) : eur.format(Number(v));
+const day = v => { if (blank(v)) return ""; const d = new Date(v); return isNaN(d) ? String(v) : dmy.format(d); };
+
+const sum = (rows, col) => rows.reduce((a, r) => a + (Number(r[col]) || 0), 0);
+
+/* --- store and header status ------------------------------------------- */
+
+const store = new SheetStore();
+StatusDot(document.getElementById("status"), store);
+
+/* --- the four numbers a shop reads off this sheet ----------------------- */
+
+const tilesEl = document.getElementById("tiles");
+[
+  { label: "Montant commandé", compute: rows => sum(rows, C_MONTANT), format: money },
+  { label: "Montant réglé", compute: rows => sum(rows, C_REGLE), format: money },
+  { label: "Reste à régler", compute: rows => sum(rows, C_MONTANT) - sum(rows, C_REGLE), format: money },
+  { label: "Livraisons à relancer", compute: rows => rows.filter(r => !blank(r[C_RELANCE])).length, format: String },
+].forEach(t => StatTile(tilesEl, store, { sheet: SHEET_CMD, ...t }));
+
+/* --- orders grid -------------------------------------------------------
+ * Nine columns and a row of dates is a "edit this record" job, not a
+ * "fix this cell" one, so the grid keeps only the two short status
+ * columns editable inline and hands the rest to a RecordForm on click.
+ * The formatted money and date columns must stay read-only here: an
+ * editable cell writes back whatever text it displays, which would put
+ * "1 234,00 €" into a numeric cell.
+ * Satut and the relance note infer as single-option picklists from the
+ * blank template, which would trap the user in "-", so both are forced
+ * to free text.
+ */
+
+const detailEl = document.getElementById("detail");
+
+const gridCmd = DataGrid(document.getElementById("grid-commandes"), store, {
+  sheet: SHEET_CMD,
+  columns: CMD_COLS,
+  editable: [C_STATUT, C_RELANCE],
+  types: { [C_STATUT]: "text", [C_RELANCE]: "text" },
+  format: { [C_MONTANT]: money, [C_REGLE]: money, [C_DATE]: day, [C_LIVR]: day, [C_DATE_REG]: day },
+  addable: true,
+  deletable: true,
+  onRowClick: openRecord,
+});
+
+function openRecord(row) {
+  detailEl.textContent = "";
+  detailEl.hidden = false;
+
+  const head = document.createElement("div");
+  head.className = "ss-row detail-head";
+  const title = document.createElement("h2");
+  title.className = "ss-shrink";
+  title.textContent = "Commande · ligne " + row._row;
+  const close = document.createElement("button");
+  close.className = "ss-btn ss-shrink";
+  close.textContent = "Close";
+  close.onclick = () => { detailEl.textContent = ""; detailEl.hidden = true; };
+  head.append(title, close);
+  detailEl.appendChild(head);
+
+  RecordForm(detailEl, store, {
+    sheet: SHEET_CMD,
+    row,
+    columns: CMD_COLS,
+    types: {
+      [C_DATE]: "date", [C_LIVR]: "date", [C_DATE_REG]: "date",
+      [C_MONTANT]: "number", [C_REGLE]: "number",
+      [C_FOURN]: "text", [C_AUTRE]: "text", [C_STATUT]: "text", [C_RELANCE]: "text",
+    },
+  });
+  detailEl.scrollIntoView({ block: "nearest" });
+}
+
+/* --- one bar: search and the Satut picklist combined -------------------
+ * setFilter replaces the whole predicate, so the two controls are ANDed
+ * into a single function instead of clearing each other.
+ */
+
+let searchPred = null;
+let statutValue = "";
+
+function applyFilters() {
+  const preds = [];
+  if (searchPred) preds.push(searchPred);
+  if (statutValue) preds.push(r => String(r[C_STATUT] ?? "") === statutValue);
+  gridCmd.setFilter(preds.length ? (r => preds.every(p => p(r))) : null);
+}
+
+SearchBox(document.getElementById("search"), {
+  placeholder: "Search orders…",
+  onChange: f => { searchPred = f; applyFilters(); },
+});
+
+const statutSel = document.getElementById("statut");
+statutSel.onchange = () => { statutValue = statutSel.value; applyFilters(); };
+
+/* Options follow the column as the shop fills it in ("Livré", "En cours"),
+ * rebuilt only when the value set actually changes so an open dropdown is
+ * never yanked out from under the pointer. */
+let statutKey = null;
+function syncStatutOptions() {
+  const values = columnValues(store.sheet(SHEET_CMD), C_STATUT);
+  const key = values.join(" ");
+  if (key === statutKey) return;
+  statutKey = key;
+  statutSel.textContent = "";
+  statutSel.appendChild(new Option("All", ""));
+  values.forEach(v => statutSel.appendChild(new Option(v, v)));
+  statutSel.value = values.includes(statutValue) ? statutValue : "";
+  if (statutSel.value !== statutValue) { statutValue = statutSel.value; applyFilters(); }
+}
+store.subscribe(syncStatutOptions);
+syncStatutOptions();
+
+/* --- the question a grid can't answer at a glance ---------------------- */
+
+const chart = ChartBlock(document.getElementById("chart"), store, {
+  sheet: SHEET_CMD,
+  x: C_FOURN,
+  y: C_MONTANT,
+  type: "bar",
+  aggregate: "sum",
+  label: C_MONTANT,
+});
+
+/* ChartBlock draws its first frame before the block is attached to the
+ * page, so Chart.js measures a detached canvas and sizes it 0x0. Redraw
+ * once now that it is in the document, rather than waiting on Chart.js's
+ * resize observer to notice. */
+chart.refresh();
+
+/* --- price list --------------------------------------------------------
+ * Coût de revient and Prix de vente are workbook formulas: DataGrid
+ * renders them read-only by itself, so they are the two columns safe to
+ * format as money. The hand-entered ones stay raw, since an editable cell
+ * saves the text it shows.
+ *
+ * Every price column in this blank template holds nothing but 0, so type
+ * inference reads them as two-option picklists and the shop could never
+ * type a price. They are declared outright instead.
+ */
+
+DataGrid(document.getElementById("grid-prix"), store, {
+  sheet: SHEET_PRIX,
+  columns: PRIX_COLS,
+  editable: ["Fournisseurs", "Produits", "Prix d'achat", "Frais de livraison", "Marge (%)"],
+  types: {
+    "Fournisseurs": "text", "Produits": "text",
+    "Prix d'achat": "number", "Frais de livraison": "number", "Marge (%)": "number",
+  },
+  format: { "Coût de revient": money, "Prix de vente": money },
+  addable: true,
+  deletable: true,
+});
+
+/* --- views -------------------------------------------------------------
+ * Two peer sheets, so tabs rather than stacked sections. Commandes is the
+ * default view; nothing sits above it that a user scrolls past every time.
+ */
+
+const views = {
+  [SHEET_CMD]: document.getElementById("view-commandes"),
+  [SHEET_PRIX]: document.getElementById("view-prix"),
+};
+
+Tabs(document.getElementById("tabs"), [SHEET_CMD, SHEET_PRIX], {
+  onSelect: name => {
+    Object.entries(views).forEach(([k, elm]) => { elm.hidden = k !== name; });
+    // Chart.js measures its canvas on render; a render that landed while
+    // the tab was hidden sized it to zero.
+    if (name === SHEET_CMD) chart.refresh();
+  },
+});
+
+store.start();
+</script>
+</body>
+</html>

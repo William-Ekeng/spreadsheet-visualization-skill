@@ -1,0 +1,451 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Suivi des commandes</title>
+<link rel="stylesheet" href="base.css">
+<script src="sheetsync.js"></script>
+<script src="components.js"></script>
+<style>
+  body { padding: 24px 28px 48px; }
+  .app-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; margin-bottom: 20px; }
+  .app-head h1 { font-size: 22px; }
+  .app-nav { border-bottom: var(--ss-border-w) solid var(--ss-border); margin-bottom: var(--ss-gap); }
+  .tiles { margin-bottom: var(--ss-gap); }
+  .toolbar { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-bottom: 12px; }
+  .toolbar .ss-search-wrap { width: 260px; }
+  .toolbar select.ss-input { width: auto; }
+  .toolbar .spacer { flex: 1; }
+  .hint { color: var(--ss-muted); font-size: 12px; margin: 0 0 12px; }
+  .work { display: flex; gap: var(--ss-gap); align-items: flex-start; flex-wrap: wrap; }
+  .work .main { flex: 1 1 560px; min-width: 0; }
+  .detail { flex: 0 0 320px; position: sticky; top: 24px; }
+  .detail h2 { margin-bottom: 2px; }
+  .detail-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; margin-bottom: 14px; }
+  .detail-empty { color: var(--ss-muted); font-size: 13px; }
+  .field-hint { color: var(--ss-muted); font-size: 12px; margin: -2px 0 2px; }
+  .detail-foot { margin-top: 18px; padding-top: 14px; border-top: var(--ss-border-w) solid var(--ss-border); }
+  /* The order-date column carries its own how-to inside the header text,
+     so headers have to be allowed to wrap instead of stretching the table. */
+  .ss-table th { white-space: normal; max-width: 240px; }
+  .lists { display: flex; gap: var(--ss-gap); flex-wrap: wrap; }
+  .lists > * { flex: 1 1 300px; }
+  .list-items { display: flex; flex-direction: column; gap: 8px; margin: 12px 0; }
+  @media (max-width: 900px) { .detail { position: static; flex: 1 1 100%; } }
+</style>
+</head>
+<body>
+
+<header class="app-head">
+  <div>
+    <h1>Suivi des commandes</h1>
+    <div class="ss-muted">Suivi_des_commandes.xlsx &middot; les modifications sont enregistrées dans le fichier</div>
+  </div>
+  <div id="status"></div>
+</header>
+
+<div class="app-nav" id="tabs"></div>
+
+<!-- Vue Commandes -->
+<section id="view-commandes">
+  <div class="ss-row tiles" id="tiles"></div>
+
+  <div class="toolbar">
+    <div id="search"></div>
+    <select class="ss-input" id="statut-filter"></select>
+    <span class="spacer"></span>
+    <button class="ss-btn ss-btn-primary" id="add-order"></button>
+  </div>
+  <p class="hint" id="grid-hint"></p>
+
+  <div class="work">
+    <div class="main" id="grid"></div>
+    <aside class="detail" id="detail"></aside>
+  </div>
+</section>
+
+<!-- Vue Prix -->
+<section id="view-prix" hidden>
+  <p class="hint" id="prix-hint"></p>
+  <div id="prix-grid"></div>
+</section>
+
+<!-- Vue Paramètres -->
+<section id="view-parametres" hidden>
+  <p class="hint" id="params-hint"></p>
+  <div class="lists" id="params"></div>
+</section>
+
+<script>
+/* ------------------------------------------------------------------ langue
+ * Le classeur est en français : toutes les chaînes de l'interface le sont
+ * aussi. Les noms de colonnes viennent du fichier et ne sont jamais
+ * réécrits, y compris "Satut".
+ */
+const t = {
+  connected: "synchronisé",
+  reconnecting: "reconnexion…",
+  search: "Rechercher une commande…",
+  allStatuses: "Tous les statuts",
+  add: "+ Nouvelle commande",
+  gridHint: "Cliquez sur une ligne pour ouvrir sa fiche : les dates, le statut et le vidage de la ligne s'y trouvent.",
+  prixHint: "Coût de revient et Prix de vente sont calculés par le classeur : ces cellules restent en lecture seule.",
+  paramsHint: "Listes de référence du classeur, feuille Paramètres.",
+  rows: n => `${n} ligne${n > 1 ? "s" : ""}`,
+  range: (from, to, total) => `${from}–${to} sur ${total}`,
+  detailTitle: "Fiche commande",
+  detailRow: n => `Ligne ${n} du classeur`,
+  detailEmpty: "Sélectionnez une ligne pour ouvrir sa fiche.",
+  close: "Fermer",
+  clear: "Vider la ligne",
+  confirmClear: "Effacer le contenu de cette ligne ? La ligne reste dans le classeur.",
+  tiles: {
+    orders: "Commandes renseignées",
+    amount: "Montant commandé",
+    paid: "Montant réglé",
+    due: "Reste à régler",
+    chase: "Livraisons à relancer",
+  },
+};
+
+/* ---------------------------------------------------------------- colonnes
+ * Libellés repris tels quels dans le fichier. L'en-tête de la colonne date
+ * contient sa propre astuce sur deux lignes ; on la garde intacte.
+ */
+const C = {
+  date: 'Date Commande\n(touche Ctrl + ";" pour inscrire la date facilement)',
+  fournisseur: "Fournisseurs",
+  montant: "Montant",
+  livraison: "Date de livraison",
+  regle: "Montant réglé",
+  reglement: "Date de règlement",
+  autre: "Autre critère à définir",
+  statut: "Satut",
+  relance: "Livraison à relancer ?",
+};
+const CMD_COLS = [C.date, C.fournisseur, C.montant, C.livraison, C.regle, C.reglement, C.autre, C.statut, C.relance];
+// Colonne masquée du classeur qui alimente la liste déroulante de "Satut".
+const STATUT_SOURCE = "col15";
+const PRIX_COLS = ["Fournisseurs", "Produits", "Prix d'achat", "Frais de livraison", "Coût de revient", "Marge (%)", "Prix de vente"];
+
+const SHEETS = { commandes: "Commandes", prix: "Prix", params: "Paramètres" };
+
+/* ------------------------------------------------------------------ outils */
+
+// Le modèle contient des lignes sentinelles remplies de "." tout en bas de
+// la plage réservée. Ce ne sont pas des commandes.
+const isJunk = cols => row => cols.some(c => String(row[c] ?? "") === ".");
+const realRows = (rows, cols) => rows.filter(r => !isJunk(cols)(r));
+const isFilled = r => [C.date, C.fournisseur, C.livraison, C.reglement, C.autre, C.relance]
+  .some(c => String(r[c] ?? "").trim() !== "") || Number(r[C.montant]) > 0;
+
+const euro = v => (Number(v) || 0).toLocaleString("fr-FR", { style: "currency", currency: "EUR", maximumFractionDigits: 2 });
+const frDate = v => {
+  if (v === null || v === undefined || v === "" || v === ".") return "";
+  const d = new Date(v);
+  return isNaN(d) ? String(v) : d.toLocaleDateString("fr-FR");
+};
+const sumCol = (rows, col) => rows.reduce((a, r) => a + (Number(r[col]) || 0), 0);
+
+const store = new SheetStore();
+
+StatusDot(document.getElementById("status"), store, { labels: { connected: t.connected, reconnecting: t.reconnecting } });
+
+/* ------------------------------------------------------------------ onglets */
+
+const views = {
+  [SHEETS.commandes]: document.getElementById("view-commandes"),
+  [SHEETS.prix]: document.getElementById("view-prix"),
+  [SHEETS.params]: document.getElementById("view-parametres"),
+};
+Tabs(document.getElementById("tabs"), Object.keys(views), {
+  onSelect: name => Object.entries(views).forEach(([k, el]) => { el.hidden = k !== name; }),
+});
+
+/* ------------------------------------------------- indicateurs (Commandes) */
+
+const tilesEl = document.getElementById("tiles");
+const tile = (label, compute, format) =>
+  StatTile(tilesEl, store, { label, sheet: SHEETS.commandes, compute: rows => compute(realRows(rows, CMD_COLS)), format });
+
+tile(t.tiles.orders, rows => rows.filter(isFilled).length);
+tile(t.tiles.amount, rows => sumCol(rows, C.montant), euro);
+tile(t.tiles.paid, rows => sumCol(rows, C.regle), euro);
+tile(t.tiles.due, rows => sumCol(rows, C.montant) - sumCol(rows, C.regle), euro);
+tile(t.tiles.chase, rows => rows.filter(r => String(r[C.relance] ?? "").trim() !== "").length);
+
+/* -------------------------------------------------------- grille Commandes */
+
+document.getElementById("grid-hint").textContent = t.gridHint;
+
+// Types déclarés colonne par colonne : les lignes sentinelles "." du modèle
+// faussent l'inférence automatique et transformeraient les montants en
+// listes déroulantes de "." et "0".
+const GRID_TYPES = {
+  [C.date]: "date", [C.livraison]: "date", [C.reglement]: "date",
+  [C.montant]: "number", [C.regle]: "number",
+  [C.fournisseur]: "text", [C.autre]: "text", [C.relance]: "text", [C.statut]: "text",
+};
+
+const grid = DataGrid(document.getElementById("grid"), store, {
+  sheet: SHEETS.commandes,
+  columns: CMD_COLS,
+  types: GRID_TYPES,
+  // Les dates et le statut se modifient dans la fiche, avec un vrai
+  // sélecteur de date et la liste déroulante du classeur : saisis à la main
+  // dans la grille, ils partiraient en texte libre dans le fichier.
+  editable: [C.fournisseur, C.montant, C.regle, C.autre, C.relance],
+  format: { [C.date]: frDate, [C.livraison]: frDate, [C.reglement]: frDate },
+  pageSize: 50,
+  labels: { range: t.range, matches: t.rows },
+  onRowClick: openDetail,
+});
+
+let searchFilter = null;
+let statutFilter = null;
+function applyFilters() {
+  grid.setFilter(r => !isJunk(CMD_COLS)(r)
+    && (!searchFilter || searchFilter(r))
+    && (!statutFilter || statutFilter(r)));
+}
+applyFilters();
+
+SearchBox(document.getElementById("search"), {
+  placeholder: t.search,
+  columns: CMD_COLS,
+  onChange: f => { searchFilter = f; applyFilters(); },
+});
+
+const statutSel = document.getElementById("statut-filter");
+statutSel.onchange = () => {
+  statutFilter = statutSel.value === "" ? null : r => String(r[C.statut] ?? "") === statutSel.value;
+  applyFilters();
+};
+
+// Les valeurs autorisées de "Satut" vivent dans une colonne source masquée
+// du classeur ; la colonne elle-même ne contient encore que "-".
+function statutOptions() {
+  const data = store.sheet(SHEETS.commandes);
+  const fromSource = columnValues(data, STATUT_SOURCE);
+  return fromSource.length ? fromSource : columnValues(data, C.statut);
+}
+
+/* ----------------------------------------------- ajout d'une commande vide */
+
+const addBtn = document.getElementById("add-order");
+addBtn.textContent = t.add;
+addBtn.onclick = async () => {
+  addBtn.disabled = true;
+  try {
+    const values = {};
+    CMD_COLS.forEach(c => values[c] = "");
+    values[C.statut] = statutOptions()[0] ?? "-";
+    await store.addRow(SHEETS.commandes, values);
+    await store.refresh();
+    // La nouvelle ligne est la dernière ligne réelle du bloc : on ouvre sa
+    // fiche pour que la saisie se fasse avec les bons éditeurs.
+    const rows = realRows(store.sheet(SHEETS.commandes).rows, CMD_COLS);
+    if (rows.length) openDetail(rows[rows.length - 1]);
+  } finally {
+    addBtn.disabled = false;
+  }
+};
+
+/* ------------------------------------------------------------ fiche détail */
+
+const detailEl = document.getElementById("detail");
+
+const CMD_TYPES = {
+  [C.date]: "date",
+  [C.livraison]: "date",
+  [C.reglement]: "date",
+  [C.montant]: "number",
+  [C.regle]: "number",
+  [C.statut]: "select",
+};
+
+let openRow = null;
+
+function detailPlaceholder() {
+  openRow = null;
+  detailEl.textContent = "";
+  const panel = document.createElement("div");
+  panel.className = "ss-panel";
+  const p = document.createElement("p");
+  p.className = "detail-empty";
+  p.textContent = t.detailEmpty;
+  panel.appendChild(p);
+  detailEl.appendChild(panel);
+}
+
+function openDetail(row) {
+  openRow = row;
+  detailEl.textContent = "";
+  const panel = document.createElement("div");
+  panel.className = "ss-panel";
+
+  const head = document.createElement("div");
+  head.className = "detail-head";
+  const titles = document.createElement("div");
+  const h2 = document.createElement("h2");
+  h2.textContent = t.detailTitle;
+  const sub = document.createElement("div");
+  sub.className = "ss-muted";
+  sub.textContent = t.detailRow(row._row);
+  titles.append(h2, sub);
+  const closeBtn = document.createElement("button");
+  closeBtn.className = "ss-btn";
+  closeBtn.textContent = t.close;
+  closeBtn.onclick = detailPlaceholder;
+  head.append(titles, closeBtn);
+  panel.appendChild(head);
+
+  const form = document.createElement("div");
+  form.className = "ss-form";
+  CMD_COLS.forEach(col => {
+    const type = CMD_TYPES[col] || "text";
+    const field = document.createElement("div");
+    field.className = "ss-form-field";
+    // Le libellé garde le texte exact du fichier ; sa deuxième ligne
+    // (l'astuce Ctrl+";") passe en note sous le libellé.
+    const [first, ...rest] = String(col).split("\n");
+    const label = document.createElement("label");
+    label.className = "ss-form-label";
+    label.textContent = first;
+    field.appendChild(label);
+    if (rest.length) {
+      const hint = document.createElement("div");
+      hint.className = "field-hint";
+      hint.textContent = rest.join(" ");
+      field.appendChild(hint);
+    }
+    FieldInput(field, {
+      type,
+      value: row[col] ?? "",
+      options: type === "select" ? statutOptions() : [],
+      onChange: async v => {
+        const value = type === "number" ? (v === "" ? "" : Number(v)) : v;
+        if (String(value) === String(row[col] ?? "")) return;
+        row[col] = value;
+        await store.saveCell(SHEETS.commandes, row._row, col, value);
+      },
+    });
+    form.appendChild(field);
+  });
+  panel.appendChild(form);
+
+  const foot = document.createElement("div");
+  foot.className = "detail-foot";
+  // On vide la ligne au lieu de la supprimer : les lignes du bloc réservé
+  // portent la mise en forme et les listes déroulantes du modèle, et les
+  // supprimer décale tout le reste de la feuille.
+  const clearBtn = document.createElement("button");
+  clearBtn.className = "ss-btn ss-btn-destructive";
+  clearBtn.textContent = t.clear;
+  clearBtn.onclick = async () => {
+    if (!confirm(t.confirmClear)) return;
+    clearBtn.disabled = true;
+    try {
+      for (const col of CMD_COLS) {
+        if (String(row[col] ?? "") === "") continue;
+        row[col] = "";
+        await store.saveCell(SHEETS.commandes, row._row, col, "");
+      }
+      await store.refresh();
+      const fresh = store.sheet(SHEETS.commandes).rows.find(r => r._row === row._row);
+      fresh ? openDetail(fresh) : detailPlaceholder();
+    } finally {
+      clearBtn.disabled = false;
+    }
+  };
+  foot.appendChild(clearBtn);
+  panel.appendChild(foot);
+
+  detailEl.appendChild(panel);
+}
+
+detailPlaceholder();
+
+/* ------------------------------------------------------------- grille Prix */
+
+document.getElementById("prix-hint").textContent = t.prixHint;
+
+const prixGrid = DataGrid(document.getElementById("prix-grid"), store, {
+  sheet: SHEETS.prix,
+  columns: PRIX_COLS,
+  types: Object.fromEntries(PRIX_COLS.map(c => [c, c === "Produits" ? "text" : "number"])),
+  editable: true,
+  pageSize: 50,
+  labels: { range: t.range, matches: t.rows },
+});
+prixGrid.setFilter(r => !isJunk(PRIX_COLS)(r));
+
+/* -------------------------------------------------------- vue Paramètres */
+
+document.getElementById("params-hint").textContent = t.paramsHint;
+const paramsEl = document.getElementById("params");
+
+function renderParams() {
+  if (paramsEl.contains(document.activeElement)) return; // ne pas voler le focus pendant une saisie
+  const data = store.sheet(SHEETS.params);
+  const rows = data.rows;
+  if (rows.length < 3) return;
+  paramsEl.textContent = "";
+  const head = rows[0], note = rows[rows.length - 1], items = rows.slice(1, -1);
+  data.headers.forEach(colKey => {
+    const title = head[colKey];
+    if (!title) return;
+    const card = document.createElement("div");
+    card.className = "ss-panel";
+    const h2 = document.createElement("h2");
+    h2.textContent = String(title);
+    card.appendChild(h2);
+    const list = document.createElement("div");
+    list.className = "list-items";
+    items.forEach(r => {
+      FieldInput(list, {
+        type: "text",
+        value: r[colKey] ?? "",
+        onChange: v => {
+          if (String(v) === String(r[colKey] ?? "")) return;
+          r[colKey] = v;
+          store.saveCell(SHEETS.params, r._row, colKey, v);
+        },
+      });
+    });
+    card.appendChild(list);
+    if (note[colKey]) {
+      const p = document.createElement("p");
+      p.className = "ss-muted";
+      p.style.margin = "0";
+      p.textContent = String(note[colKey]);
+      card.appendChild(p);
+    }
+    paramsEl.appendChild(card);
+  });
+}
+
+/* --------------------------------------------------------------- démarrage */
+
+let bootstrapped = false;
+store.subscribe(() => {
+  if (!store.sheetNames().length) return;
+  if (!bootstrapped) {
+    bootstrapped = true;
+    statutSel.appendChild(new Option(t.allStatuses, ""));
+    statutOptions().forEach(v => statutSel.appendChild(new Option(v, v)));
+  }
+  renderParams();
+  // Une modification faite dans Excel pendant qu'une fiche est ouverte doit
+  // s'y voir aussi, sans écraser une saisie en cours.
+  if (openRow && !detailEl.contains(document.activeElement)) {
+    const fresh = store.sheet(SHEETS.commandes).rows.find(r => r._row === openRow._row);
+    if (fresh) openDetail(fresh); else detailPlaceholder();
+  }
+});
+
+store.start();
+</script>
+</body>
+</html>

@@ -1,0 +1,473 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Suivi des commandes</title>
+<link rel="stylesheet" href="base.css">
+<script src="sheetsync.js"></script>
+<script src="components.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<style>
+  body { max-width: 1400px; margin: 0 auto; }
+
+  .app-head { display: flex; align-items: flex-start; gap: 16px; margin-bottom: 18px; }
+  .app-head .ss-grow { flex: 1; }
+  .app-head p { margin: 4px 0 0; }
+
+  .view[hidden] { display: none; }
+  .view { margin-top: 18px; }
+
+  .toolbar { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+  .toolbar .search-cell { flex: 1 1 240px; max-width: 340px; }
+  .toolbar select.ss-input { flex: 0 0 auto; min-width: 170px; }
+
+  /* The workbook's own header text carries an inline hint on a second
+     line ("touche Ctrl + ;"). Keep it, but let it wrap instead of
+     stretching the column to the width of the sentence. */
+  .ss-table th { white-space: pre-line; max-width: 190px; }
+
+  /* A blank cell in a read-only grid reads as a rendering gap; an em dash
+     says "nothing here yet" and gives the row something to click. */
+  .ss-table tbody td:empty::after { content: "—"; color: var(--ss-muted); }
+  .num { text-align: right; }
+
+  .work { align-items: stretch; }
+  .work > .ss-grow { flex: 3; }
+  .fiche { flex: 0 0 320px; display: none; }
+  .fiche.open { display: block; }
+  .fiche-head { display: flex; align-items: center; gap: 10px; margin-bottom: 14px; }
+  .fiche-head h2 { margin: 0; flex: 1; }
+  .fiche .hint { margin-top: -2px; }
+  .fiche-readonly { display: flex; justify-content: space-between; gap: 12px;
+                    padding: 8px 10px; border-radius: var(--ss-radius-sm);
+                    background: var(--ss-formula-bg); font-size: 13px; }
+
+  .param-lists { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 24px; }
+  .param-list .ss-form-field + .ss-form-field { margin-top: 10px; }
+  .param-note { margin-top: 12px; }
+
+  footer { margin-top: 28px; padding-top: 16px; border-top: 1px solid var(--ss-border); }
+  footer ul { margin: 8px 0 0; padding-left: 18px; }
+  footer li { color: var(--ss-muted); font-size: 13px; margin-bottom: 4px; }
+</style>
+</head>
+<body>
+
+<header class="app-head">
+  <div class="ss-grow">
+    <h1>Suivi des commandes</h1>
+    <p class="ss-muted">Suivi_des_commandes.xlsx &middot; toute modification est &eacute;crite directement dans le classeur.</p>
+  </div>
+  <div class="ss-shrink" id="status"></div>
+</header>
+
+<div id="tabs"></div>
+
+<!-- ============================ Commandes ============================ -->
+<section class="view" id="view-commandes">
+  <div class="ss-row" id="tiles"></div>
+
+  <div class="ss-row work" style="margin-top:var(--ss-gap);">
+    <div class="ss-grow ss-panel ss-stack">
+      <div class="toolbar">
+        <div class="search-cell" id="search"></div>
+        <select class="ss-input" id="statut-filter"></select>
+        <button class="ss-btn ss-btn-ghost" id="reset">R&eacute;initialiser</button>
+      </div>
+      <div id="grid-commandes"></div>
+      <p class="ss-muted">Le tableau est la vue d'ensemble. Cliquez une ligne pour ouvrir sa fiche &agrave; droite :
+        tout s'y modifie, avec les listes <strong>Fournisseurs</strong> et <strong>Satut</strong> du classeur,
+        et chaque champ est enregistr&eacute; d&egrave;s que vous en sortez. &laquo;&nbsp;+ Add row&nbsp;&raquo; ajoute une ligne vide &agrave; remplir dans la fiche.</p>
+    </div>
+    <aside class="fiche ss-panel" id="fiche"></aside>
+  </div>
+
+  <div class="ss-panel" style="margin-top:var(--ss-gap);">
+    <h2>Montant command&eacute; par fournisseur</h2>
+    <div id="chart"></div>
+  </div>
+</section>
+
+<!-- =============================== Prix ============================== -->
+<section class="view" id="view-prix" hidden>
+  <div class="ss-row" id="tiles-prix"></div>
+
+  <div class="ss-row work" style="margin-top:var(--ss-gap);">
+    <div class="ss-grow ss-panel ss-stack">
+      <div id="grid-prix"></div>
+      <p class="ss-muted">Les colonnes <strong>Co&ucirc;t de revient</strong> et <strong>Prix de vente</strong> sont des
+        formules du classeur : elles ne sont pas modifiables ici et sont recalcul&eacute;es &agrave; l'affichage
+        (prix d'achat + frais, puis co&ucirc;t &times; (1 + marge)) pour rester justes entre deux ouvertures d'Excel.
+        Cliquez une ligne pour ouvrir la fiche du tarif et saisir le prix d'achat, les frais et la marge.</p>
+    </div>
+    <aside class="fiche ss-panel" id="fiche-prix"></aside>
+  </div>
+</section>
+
+<!-- ============================ Param&egrave;tres ========================= -->
+<section class="view" id="view-parametres" hidden>
+  <div class="ss-panel">
+    <h2>Listes de r&eacute;f&eacute;rence</h2>
+    <p class="ss-muted">Ces deux listes alimentent les menus d&eacute;roulants des onglets Commandes et Prix.</p>
+    <div class="param-lists" id="param-lists" style="margin-top:16px;"></div>
+  </div>
+</section>
+
+<footer>
+  <strong>Bon &agrave; savoir</strong>
+  <ul>
+    <li>Le classeur reste la source unique : une saisie faite ici appara&icirc;t dans Excel, et l'inverse aussi, en une seconde environ.</li>
+    <li>Si le fichier est ouvert dans Excel sous Windows, il est verrouill&eacute; : les modifications faites dans le navigateur &eacute;chouent tant qu'il n'est pas ferm&eacute; ou enregistr&eacute;.</li>
+    <li>Les cellules de formule (Co&ucirc;t de revient, Prix de vente) restent en lecture seule : le classeur garde ses formules, et la page en affiche le r&eacute;sultat recalcul&eacute; c&ocirc;t&eacute; navigateur. Excel red&eacute;taille les vraies valeurs au prochain enregistrement.</li>
+    <li>Les montants saisis dans les fiches sont &eacute;crits comme de vrais nombres. Les dates, elles, arrivent dans le classeur sous forme de texte (AAAA-MM-JJ) : reformatez-les dans Excel si vous avez besoin de calculer dessus.</li>
+    <li>Enchaîner plusieurs champs très vite peut faire perdre une écriture : laissez une fraction de seconde entre deux champs, ou vérifiez la ligne après coup.</li>
+  </ul>
+</footer>
+
+<script>
+/* ------------------------------------------------------------------ setup */
+const store = new SheetStore();
+
+const S_CMD = "Commandes", S_PRIX = "Prix", S_PARAM = "Paramètres";
+
+/* The header text as it literally sits in the file, hint line included. */
+const COL_DATE_CMD = 'Date Commande\n(touche Ctrl + ";" pour inscrire la date facilement)';
+
+/* The sheets declare the full 16384-column range, so the parse surfaces
+   phantom col9.. columns. The real tables are these: */
+const COLS_CMD = [COL_DATE_CMD, "Fournisseurs", "Montant", "Date de livraison",
+                  "Montant réglé", "Date de règlement",
+                  "Autre critère à définir", "Satut", "Livraison à relancer ?"];
+const COLS_PRIX = ["Fournisseurs", "Produits", "Prix d'achat", "Frais de livraison",
+                   "Coût de revient", "Marge (%)", "Prix de vente"];
+
+const eur = v => new Intl.NumberFormat("fr-FR", { style: "currency", currency: "EUR" }).format(Number(v) || 0);
+const pct = v => new Intl.NumberFormat("fr-FR", { style: "percent", maximumFractionDigits: 1 }).format(Number(v) || 0);
+const eurCell = v => (v === null || v === undefined || v === "") ? "" : eur(v);
+const pctCell = v => (v === null || v === undefined || v === "") ? "" : pct(v);
+const dateCell = v => {
+  if (!filled(v)) return "";
+  const d = new Date(v);
+  return isNaN(d) ? String(v) : d.toLocaleDateString("fr-FR");
+};
+/* The server writes whatever JSON it is handed, so a value sent as a JS
+   number lands as a real numeric cell and Excel's own totals keep working.
+   Sent as a string it would land as text. Accepts the French decimal
+   comma on the way in. */
+const asNumber = v => {
+  const s = String(v ?? "").trim().replace(",", ".");
+  return s !== "" && !isNaN(Number(s)) ? Number(s) : v;
+};
+/* The template ends both sheets with a sentinel row 2026 whose cells all
+   hold a literal ".", there to pin the reserved range open. It is real
+   file content so the grid still shows it, but it isn't a commande, so
+   the counters don't treat it as filled. */
+const filled = v => v !== null && v !== undefined && String(v).trim() !== "" && String(v).trim() !== ".";
+
+function mk(tag, cls, text) {
+  const n = document.createElement(tag);
+  if (cls) n.className = cls;
+  if (text !== undefined) n.textContent = text;
+  return n;
+}
+
+StatusDot(document.getElementById("status"), store);
+
+/* ------------------------------------------------- derived Prix columns
+ * Coût de revient (=C+D) and Prix de vente (=E*(1+F)) are Excel formulas,
+ * and openpyxl drops Excel's cached results every time the server saves
+ * the file, so both columns read blank from the first browser edit until
+ * someone reopens the workbook in Excel. Both are plain arithmetic over
+ * columns that are already in the sheet, so they get recomputed here for
+ * display instead (option 3 in the skill's formulas reference). This
+ * subscriber is registered before any block, so every render sees the
+ * filled values, and nothing is ever written back: the file keeps its
+ * formulas.
+ */
+const S_CHART = "__commandes_par_fournisseur";
+
+store.subscribe(() => {
+  store.sheet(S_PRIX).rows.forEach(r => {
+    if (!store.isFormulaCell(S_PRIX, r._row, "Coût de revient")) return;
+    const cout = (Number(r["Prix d'achat"]) || 0) + (Number(r["Frais de livraison"]) || 0);
+    r["Coût de revient"] = cout;
+    r["Prix de vente"] = cout * (1 + (Number(r["Marge (%)"]) || 0));
+  });
+
+  /* ChartBlock plots every row of the sheet it is given, and this template
+     keeps a long block of reserved blank rows plus the "." sentinel, which
+     would show up as two junk categories on the axis. Rather than filter
+     inside the block (it has no such option) the chart gets its own
+     derived sheet, rebuilt here on every refresh because the store
+     replaces this.sheets wholesale on each fetch. */
+  store.sheets[S_CHART] = {
+    headers: ["Fournisseurs", "Montant"],
+    rows: store.sheet(S_CMD).rows.filter(r => filled(r.Fournisseurs)),
+    formulas: {}, meta: {}, header_row: 1,
+  };
+});
+
+/* ---------------------------------------------- vocabularies from the file
+ * The workbook drives its own dropdowns through data validation:
+ *   Commandes!H  ("Satut")     <- Commandes!P5:P7
+ *   Prix!A / Prix!B            <- Paramètres!F4:F7 / Paramètres!A4:A7
+ * P5:P7 lands in the parse as the phantom column "col15", so the status
+ * list is read from there rather than hard-coded here.
+ */
+function statutOptions() {
+  const d = store.sheet(S_CMD);
+  if (!d) return [];
+  return [...new Set([...columnValues(d, "col15"), ...columnValues(d, "Satut")])].filter(filled);
+}
+
+function paramList(key) {
+  const d = store.sheet(S_PARAM);
+  if (!d) return [];
+  // rows[0] is the "Produits / Fournisseurs" block header; the last line of
+  // each list is the workbook's own how-to sentence, not an entry.
+  return d.rows.slice(1)
+    .map(r => r[key])
+    .filter(v => filled(v) && !/^Pour ajouter/i.test(String(v)))
+    .map(String);
+}
+const produitsList = () => paramList("col0");
+const fournisseursList = () => paramList("col5");
+
+/* ------------------------------------------------------------- Commandes */
+const tilesEl = document.getElementById("tiles");
+const tile = (label, compute, format) => StatTile(tilesEl, store, { label, sheet: S_CMD, compute, format });
+
+tile("Commandes saisies",
+     rows => rows.filter(r => filled(r[COL_DATE_CMD]) || filled(r.Fournisseurs) || Number(r.Montant) > 0).length);
+tile("Montant commandé", agg.sum("Montant"), eur);
+tile("Montant réglé", agg.sum("Montant réglé"), eur);
+tile("Reste à régler",
+     rows => rows.reduce((a, r) => a + (Number(r.Montant) || 0) - (Number(r["Montant réglé"]) || 0), 0), eur);
+tile("Livraisons à relancer",
+     rows => rows.filter(r => filled(r["Livraison à relancer ?"])).length);
+
+const ficheEl = document.getElementById("fiche");
+
+/* The grid is the read-only overview; the fiche is the editor. Two reasons
+   it isn't editable in place: the workbook drives Fournisseurs and Satut
+   from validation lists that free-typed cells would defeat, and an inline
+   cell can only ever send a string, which would turn Montant into text and
+   break the sheet's own totals. Keeping every cell read-only also makes
+   the whole row clickable (an editable cell swallows the click), so the
+   row-hover affordance tells the truth. */
+const gridCmd = DataGrid(document.getElementById("grid-commandes"), store, {
+  sheet: S_CMD,
+  columns: COLS_CMD,
+  editable: false,
+  addable: true,
+  deletable: true,
+  pageSize: 50,
+  format: {
+    [COL_DATE_CMD]: dateCell,
+    "Date de livraison": dateCell,
+    "Date de règlement": dateCell,
+    "Montant": eurCell,
+    "Montant réglé": eurCell,
+  },
+  onRowClick: row => openFiche(row),
+});
+
+/* One predicate, two inputs: setFilter replaces the whole thing. */
+let searchPred = null, statutPick = "";
+function applyFilters() {
+  gridCmd.setFilter(r =>
+    (!searchPred || searchPred(r)) &&
+    (!statutPick || String(r.Satut ?? "") === statutPick));
+}
+
+const search = SearchBox(document.getElementById("search"), {
+  placeholder: "Rechercher une commande…",
+  columns: COLS_CMD,              // keeps the phantom columns out of the match
+  onChange: f => { searchPred = f; applyFilters(); },
+});
+
+const statutSel = document.getElementById("statut-filter");
+document.getElementById("reset").onclick = () => {
+  search.el.value = "";           // silent: search.clear() would fire onChange
+  searchPred = null;
+  statutSel.value = "";
+  statutPick = "";
+  applyFilters();
+};
+statutSel.onchange = () => { statutPick = statutSel.value; applyFilters(); };
+
+ChartBlock(document.getElementById("chart"), store, {
+  sheet: S_CHART, x: "Fournisseurs", y: "Montant", type: "bar",
+  aggregate: "sum", label: "Montant commandé",
+});
+
+/* ------------------------------------------------------------ fiche panel
+ * Not RecordForm: its select options come from the values already present
+ * in the column, and this workbook's lists live elsewhere (see above). The
+ * fields are otherwise the same live-autosave contract.
+ */
+function ficheField(parent, col, type, options, value, onSave) {
+  const wrap = mk("div", "ss-form-field");
+  const [head, ...rest] = String(col).split("\n");
+  wrap.appendChild(mk("label", "ss-form-label", head));
+  if (rest.length) wrap.appendChild(mk("div", "ss-muted hint", rest.join(" ")));
+  FieldInput(wrap, { type, value: value ?? "", options: options || [], onChange: onSave });
+  parent.appendChild(wrap);
+}
+
+function buildFiche(panel, title, sheetName, row, fields, readonlyCols) {
+  panel.textContent = "";
+  panel.classList.add("open");
+
+  const head = mk("div", "fiche-head");
+  head.appendChild(mk("h2", null, title));
+  const close = mk("button", "ss-btn ss-btn-ghost", "✕");
+  close.onclick = () => { panel.textContent = ""; panel.classList.remove("open"); };
+  head.appendChild(close);
+  panel.appendChild(head);
+
+  const form = mk("div", "ss-form");
+  fields.forEach(f => {
+    ficheField(form, f.col, f.type, f.options ? f.options() : [], row[f.col], async v => {
+      if (String(v) === String(row[f.col] ?? "")) return;
+      const out = f.type === "number" ? asNumber(v) : v;
+      row[f.col] = out;
+      await store.saveCell(sheetName, row._row, f.col, out);
+    });
+  });
+  panel.appendChild(form);
+
+  (readonlyCols || []).forEach(({ col, format }) => {
+    const line = mk("div", "fiche-readonly");
+    line.appendChild(mk("span", "ss-muted", col));
+    line.appendChild(mk("strong", null, format ? format(row[col]) : String(row[col] ?? "–")));
+    form.appendChild(line);
+  });
+}
+
+function openFiche(row) {
+  buildFiche(ficheEl, "Commande · ligne " + row._row, S_CMD, row, [
+    { col: COL_DATE_CMD, type: "date" },
+    { col: "Fournisseurs", type: "select", options: () => ["", ...produitsList()] },
+    { col: "Montant", type: "number" },
+    { col: "Date de livraison", type: "date" },
+    { col: "Montant réglé", type: "number" },
+    { col: "Date de règlement", type: "date" },
+    { col: "Satut", type: "select", options: statutOptions },
+    { col: "Autre critère à définir", type: "text" },
+    { col: "Livraison à relancer ?", type: "text" },
+  ]);
+}
+
+/* ------------------------------------------------------------------ Prix */
+const tilesPrixEl = document.getElementById("tiles-prix");
+const tileP = (label, compute, format) => StatTile(tilesPrixEl, store, { label, sheet: S_PRIX, compute, format });
+
+/* Averaged over the lines that actually name a product, not over the
+   template's reserved blank rows, which would drag every average to zero. */
+const tarifs = rows => rows.filter(r => filled(r.Produits));
+const avgOf = col => rows => {
+  const t = tarifs(rows);
+  return t.length ? t.reduce((a, r) => a + (Number(r[col]) || 0), 0) / t.length : 0;
+};
+
+tileP("Références tarifées", rows => tarifs(rows).length);
+tileP("Coût de revient moyen", avgOf("Coût de revient"), eur);
+tileP("Prix de vente moyen", avgOf("Prix de vente"), eur);
+tileP("Marge moyenne", avgOf("Marge (%)"), pct);
+
+const fichePrixEl = document.getElementById("fiche-prix");
+
+DataGrid(document.getElementById("grid-prix"), store, {
+  sheet: S_PRIX,
+  columns: COLS_PRIX,
+  editable: false,
+  addable: true,
+  deletable: true,
+  pageSize: 50,
+  format: {
+    "Prix d'achat": eurCell,
+    "Frais de livraison": eurCell,
+    "Coût de revient": eurCell,
+    "Prix de vente": eurCell,
+    "Marge (%)": pctCell,
+  },
+  onRowClick: row => buildFiche(fichePrixEl, "Tarif · ligne " + row._row, S_PRIX, row, [
+    { col: "Fournisseurs", type: "select", options: () => ["", ...fournisseursList()] },
+    { col: "Produits", type: "select", options: () => ["", ...produitsList()] },
+    { col: "Prix d'achat", type: "number" },
+    { col: "Frais de livraison", type: "number" },
+    { col: "Marge (%)", type: "number" },
+  ], [{ col: "Coût de revient", format: eurCell }, { col: "Prix de vente", format: eurCell }]),
+});
+
+/* ------------------------------------------------------------ Paramètres
+ * Two independent lists sitting side by side in one sheet (column A and
+ * column F), which is not a table, so it gets plain editable fields rather
+ * than a grid. Adding an entry has to happen in Excel: a new row appended
+ * at the bottom would fall outside the A4:A7 / F4:F7 ranges the dropdowns
+ * point at. That is exactly what the sheet's own note says, so the note is
+ * shown as-is.
+ */
+const paramListsEl = document.getElementById("param-lists");
+let paramBuilt = false;
+
+function renderParametres() {
+  const d = store.sheet(S_PARAM);
+  if (paramBuilt || !d.rows.length) return;   // store.sheet() returns an empty shell before the first payload
+  paramBuilt = true;
+  paramListsEl.textContent = "";
+
+  [["col0", 0], ["col5", 1]].forEach(([key]) => {
+    const col = mk("div", "param-list");
+    col.appendChild(mk("h3", null, String(d.rows[0]?.[key] ?? key)));
+    let note = "";
+    d.rows.slice(1).forEach(r => {
+      const v = r[key];
+      if (!filled(v)) return;
+      if (/^Pour ajouter/i.test(String(v))) { note = String(v); return; }
+      const wrap = mk("div", "ss-form-field");
+      FieldInput(wrap, {
+        type: "text", value: v,
+        onChange: async nv => {
+          if (String(nv) === String(r[key] ?? "")) return;
+          r[key] = nv;
+          await store.saveCell(S_PARAM, r._row, key, nv);
+        },
+      });
+      col.appendChild(wrap);
+    });
+    if (note) col.appendChild(mk("p", "ss-muted param-note", note));
+    paramListsEl.appendChild(col);
+  });
+}
+
+/* ------------------------------------------------------------------ views */
+const VIEWS = [
+  { name: S_CMD, el: document.getElementById("view-commandes") },
+  { name: S_PRIX, el: document.getElementById("view-prix") },
+  { name: S_PARAM, el: document.getElementById("view-parametres") },
+];
+
+Tabs(document.getElementById("tabs"), VIEWS.map(v => v.name), {
+  active: S_CMD,
+  onSelect: name => VIEWS.forEach(v => v.el.hidden = v.name !== name),
+});
+
+/* The status vocabulary and the reference lists only exist once the first
+   payload has landed, so fill them on the first change rather than now. */
+let booted = false;
+store.subscribe(() => {
+  renderParametres();
+  if (booted || !store.sheet(S_CMD).rows.length) return;
+  booted = true;
+  statutSel.textContent = "";
+  statutSel.appendChild(new Option("Tous les statuts", ""));
+  statutOptions().forEach(v => statutSel.appendChild(new Option(v, v)));
+});
+
+store.start();
+</script>
+</body>
+</html>

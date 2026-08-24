@@ -72,6 +72,8 @@ parts and ordinary HTML/CSS for everything else. Read
 `references/components.md` for the full API of every block, the CSS-only
 primitives (badges, flow chips, fact tables), theming, and the wiring
 patterns (search into grid, row into form, tabs driving everything).
+`references/composition.md` covers the page around the blocks: layout,
+hierarchy, and the states an app has to handle.
 
 ## Workflow
 
@@ -110,10 +112,15 @@ patterns (search into grid, row into form, tabs driving everything).
    `references/formulas-and-limitations.md` before promising anything:
    support is partial and display-only (`--recalc`).
 
-3. **Compose the app.** Create an app directory (or reuse the
-   spreadsheet's), copy in `sheetsync.js`, `components.js`, `base.css`
-   from this skill's `assets/`, and write an `app.html` that composes the
-   blocks for this spreadsheet's purpose. `assets/example-app.html` shows
+3. **Compose the app.** Before writing any HTML, read three
+   references: `references/components.md` for the API of every block
+   and the wiring patterns, `references/design-fundamentals.md` for
+   the design literacy the blocks alone don't provide (control bars,
+   hierarchy, proportion), and `references/composition.md` for how to
+   assemble the kit into a page (block choice, layout, states). Then create an app directory (or
+   reuse the spreadsheet's), copy in `sheetsync.js`, `components.js`,
+   `base.css` from this skill's `assets/`, and write an `app.html` that
+   composes the blocks for this spreadsheet's purpose. `assets/example-app.html` shows
    the minimal composition shape (store, then blocks, then
    `store.start()`); it is also the server's fallback UI when `--ui`
    isn't given, but a real deliverable should almost always be a
@@ -127,12 +134,19 @@ patterns (search into grid, row into form, tabs driving everything).
    uv run sync_server.py --file "path/to/spreadsheet.xlsx" --ui "path/to/app.html" --port 5000
    ```
    (or `python sync_server.py ...` on the pip route from step 2.)
+   Avoid ports Chrome refuses outright (5060, 5061, 6000, 6666 and a few
+   dozen others): the server runs and answers `curl` fine while the browser
+   shows only `ERR_UNSAFE_PORT`, which reads as a broken app. The server
+   refuses to start on one and suggests an alternative, but 5000-5059 and
+   5062+ are safe if you'd rather not think about it.
    Open `http://127.0.0.1:5000` and actually exercise the app: the blocks
    render with real data, an edit in the browser lands in the file, an
    edit to the file (or in Excel) shows up in the browser within a second
    or two, and the purpose-specific interactions (search, form save,
-   filter) behave. Don't report done without exercising both sync
-   directions.
+   filter) behave. Then run the "Before reporting done" checklist at
+   the end of `references/composition.md` over the composed page and
+   fix what it finds. Don't report done without exercising both sync
+   directions and passing that checklist.
 
 5. **Tell the user about limitations that apply to their spreadsheet.**
    Most commonly: formula cells are read-only in the browser and may show
@@ -150,10 +164,32 @@ auto-detection for exports with metadata blocks above the table (surfaced
 as `sheet.meta` for MetaPanel), formula-cell detection, legacy `.xls`
 conversion, and CSV support.
 
+Template workbooks are handled too, and they're common: sheets that
+declare a huge range (often the full 16,384 columns) while holding a
+handful of real rows, with formatting and formulas filled down a long
+reserved block. The server measures each sheet's real extent instead of
+trusting the declared one, skips value-less rows so the grid isn't
+flooded with hundreds of blanks, and appends into the first genuinely
+free row so a new entry lands inside the ranges the workbook's own
+totals sum over. Sheet order is preserved as the workbook has it, which
+matters when the sheets are months. If a sheet still looks wrong (bad
+header row, phantom columns), that's a bug to report rather than
+something to work around in the composition.
+
 ## Read next
 
 - `references/components.md`: full API for `SheetStore` and every block,
   plus wiring patterns. Read this before composing.
+- `references/design-fundamentals.md`: stack-agnostic design literacy:
+  control bars, hierarchy, alignment, proportion, restraint. Read this
+  before composing; it's what keeps a correctly wired page from
+  reading as slop.
+- `references/composition.md`: how to assemble the kit into a page:
+  block choice, layout, states, the pre-done checklist. Read this
+  before composing, together with the two references above.
+- `references/theming.md`: the token contract, the shipped themes, and
+  the procedure for writing a new theme. Read this when the user names a
+  vibe or asks for a look the neutral default doesn't cover.
 - `references/formulas-and-limitations.md`: formula recalculation limits
   and the `--recalc` flag, header-detection edge cases,
   concurrency/locking behavior, scaling notes. Read before telling a user

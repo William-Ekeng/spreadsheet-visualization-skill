@@ -1,0 +1,543 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Suivi des commandes</title>
+<link rel="stylesheet" href="base.css">
+<script src="sheetsync.js"></script>
+<script src="components.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<style>
+  /* Page shell only. Every color, font and radius comes from the --ss-*
+     token contract in base.css; nothing here introduces a palette. */
+  [hidden] { display: none !important; }
+
+  .page { max-width: 1280px; margin: 0 auto; }
+
+  /* One control row per data region, aligned on a single middle line.
+     Controls are sized to their content so the row stays a bar instead of
+     degenerating into full-width bands (.ss-row stretches children by
+     default). */
+  .bar { align-items: center; }
+  .bar .search { width: 280px; }
+  .bar .field-inline { display: flex; align-items: center; gap: calc(var(--ss-gap) / 2); white-space: nowrap; }
+  .bar .field-inline select { width: 160px; }
+  .bar .spacer { flex: 1 1 auto; min-width: 0; }
+
+  /* The detail panel sits beside the grid, so clicking a row shows the
+     answer where the user is already looking. Below ~820px .ss-row wraps
+     it underneath on its own. */
+  .grid-col { flex: 1 1 480px; min-width: min(480px, 100%); }
+  .fiche { flex: 0 0 360px; max-width: 100%; }
+  .fiche-head { display: flex; align-items: flex-start; gap: var(--ss-gap); }
+  .fiche-head .ss-grow { flex: 1; }
+
+  /* The order sheet's first column carries an Excel keyboard tip inside the
+     header cell; base.css keeps headers on one line, which would blow the
+     column out to ~450px. Wrapping is capped rather than the name changed:
+     column names are data. */
+  .ss-table th { white-space: normal; max-width: 20ch; }
+
+  /* Money and percentages line up on their decimals. */
+  #grid-commandes .ss-table td:nth-child(3),
+  #grid-commandes .ss-table td:nth-child(5),
+  #grid-prix .ss-table td:nth-child(3),
+  #grid-prix .ss-table td:nth-child(4),
+  #grid-prix .ss-table td:nth-child(5),
+  #grid-prix .ss-table td:nth-child(6),
+  #grid-prix .ss-table td:nth-child(7) { text-align: right; font-variant-numeric: tabular-nums; }
+
+  /* A four-bar chart stretched across 1280px reads as a banner, not data. */
+  .chart-panel { max-width: 720px; }
+
+  /* --ss-danger is the kit's semantic error token, not a second accent. */
+  .err { color: var(--ss-danger); border-color: var(--ss-danger); }
+</style>
+</head>
+<body>
+
+<div class="page ss-stack">
+
+  <header>
+    <div class="ss-row" style="align-items: baseline;">
+      <h1 class="ss-shrink">Suivi des commandes</h1>
+      <div class="ss-shrink" id="status"></div>
+    </div>
+    <p class="ss-muted" id="subtitle">Suivi_des_commandes.xlsx&nbsp;: chaque modification est écrite directement dans le fichier.</p>
+  </header>
+
+  <div id="alert" class="ss-panel err" role="alert" hidden></div>
+
+  <div id="tabs"></div>
+
+  <p class="ss-muted" id="loading">Chargement du classeur…</p>
+
+  <!-- Vue Commandes ---------------------------------------------------- -->
+  <section id="view-commandes" class="ss-stack" hidden>
+
+    <div class="ss-row" id="tiles"></div>
+
+    <div class="ss-row">
+      <div class="grid-col ss-panel ss-stack">
+        <div class="ss-row bar">
+          <div class="ss-shrink search" id="search-commandes"></div>
+          <label class="ss-shrink field-inline" for="filtre-statut">
+            Statut
+            <select id="filtre-statut" class="ss-input"></select>
+          </label>
+          <label class="ss-shrink field-inline" for="vides-commandes">
+            <input type="checkbox" class="ss-input" id="vides-commandes" checked>
+            Masquer les lignes vides
+          </label>
+          <span class="spacer"></span>
+          <button type="button" class="ss-btn ss-btn-primary ss-shrink" id="ajouter-commande">+ Nouvelle commande</button>
+        </div>
+        <div id="grid-commandes"></div>
+        <p class="ss-muted" id="vide-commandes" hidden></p>
+        <p class="ss-muted">
+          Cliquez sur une ligne pour ouvrir sa fiche et la modifier&nbsp;: le tableau affiche les montants
+          et les dates mis en forme, la fiche contient les champs saisissables. Chaque champ est enregistré
+          dès que vous le quittez. Si le classeur est ouvert dans Excel, l’enregistrement échoue&nbsp;:
+          fermez-le, puis réessayez.
+        </p>
+      </div>
+      <aside class="fiche" id="fiche-commandes" hidden></aside>
+    </div>
+
+    <div class="ss-panel chart-panel ss-stack">
+      <h2>Montant commandé par fournisseur</h2>
+      <div id="chart-commandes"></div>
+      <p class="ss-muted" id="chart-vide" hidden>Aucun montant saisi pour l’instant. Le graphique se remplit dès la première commande chiffrée.</p>
+    </div>
+
+  </section>
+
+  <!-- Vue Prix --------------------------------------------------------- -->
+  <section id="view-prix" class="ss-stack" hidden>
+    <div class="ss-row">
+      <div class="grid-col ss-panel ss-stack">
+        <div class="ss-row bar">
+          <div class="ss-shrink search" id="search-prix"></div>
+          <label class="ss-shrink field-inline" for="vides-prix">
+            <input type="checkbox" class="ss-input" id="vides-prix" checked>
+            Masquer les lignes vides
+          </label>
+          <span class="spacer"></span>
+          <button type="button" class="ss-btn ss-btn-primary ss-shrink" id="ajouter-prix">+ Nouveau tarif</button>
+        </div>
+        <div id="grid-prix"></div>
+        <p class="ss-muted" id="vide-prix" hidden></p>
+        <p class="ss-muted">
+          Cliquez sur une ligne pour ouvrir sa fiche et la modifier. «&nbsp;Coût de revient&nbsp;» et
+          «&nbsp;Prix de vente&nbsp;» sont calculés par le classeur&nbsp;: ils sont en lecture seule ici et
+          gardent la valeur enregistrée par Excel jusqu’au prochain enregistrement du fichier.
+        </p>
+      </div>
+      <aside class="fiche" id="fiche-prix" hidden></aside>
+    </div>
+  </section>
+
+  <p class="ss-muted" id="footnote" hidden>
+    Les listes «&nbsp;Fournisseurs&nbsp;» et «&nbsp;Produits&nbsp;» proposées dans les fiches viennent
+    de la feuille Paramètres du classeur. Pour en ajouter, insérez une ligne dans cette feuille.
+  </p>
+
+</div>
+
+<script>
+/* ------------------------------------------------------------------ langue
+ * Le classeur est en français, donc toute l'interface l'est aussi, y compris
+ * les libellés que le kit rendrait en anglais par défaut. Les noms de
+ * colonnes ne sont jamais réécrits : ce sont des données (« Satut » compris).
+ */
+const t = {
+  connecte: "connecté",
+  reconnexion: "reconnexion…",
+  rechercher: "Rechercher…",
+  lignes: n => n === 0 ? "aucune ligne" : n === 1 ? "1 ligne" : n + " lignes",
+  plage: (a, b, total) => `${a}–${b} sur ${total}`,
+  fermer: "Fermer",
+  ficheCommande: "Fiche commande",
+  fichePrix: "Fiche tarif",
+  ligneFichier: n => `Ligne ${n} du fichier`,
+  tousStatuts: "Tous",
+  aucuneCommande: "Aucune commande enregistrée. Cliquez sur « + Nouvelle commande » pour en saisir une.",
+  aucunTarif: "Aucun tarif renseigné. Cliquez sur « + Nouveau tarif » pour en ajouter un.",
+  aucunResultat: "Aucune ligne ne correspond à votre recherche.",
+  echecAjout: "Impossible d’ajouter la ligne. Fermez le fichier dans Excel, puis réessayez.",
+  echecEnregistrement: "Impossible d’enregistrer la modification. Fermez le fichier dans Excel, puis réessayez.",
+  echecGraphique: "Le graphique n’a pas pu être chargé (Chart.js indisponible hors ligne).",
+  indiceMarge: "Fraction du coût de revient : 0,2 = 20 %.",
+};
+
+/* ------------------------------------------------------------- formatteurs */
+const euros = new Intl.NumberFormat("fr-FR", { style: "currency", currency: "EUR" });
+const pourcent = new Intl.NumberFormat("fr-FR", { style: "percent", minimumFractionDigits: 2 });
+
+const estVide = v => v === null || v === undefined || String(v).trim() === "";
+const fmtEuros = v => estVide(v) || isNaN(Number(v)) ? (estVide(v) ? "" : String(v)) : euros.format(Number(v));
+const fmtPourcent = v => estVide(v) || isNaN(Number(v)) ? (estVide(v) ? "" : String(v)) : pourcent.format(Number(v));
+
+/* Le serveur sérialise les dates xlsx en RFC1123 ; les dates saisies ici
+   repartent en ISO. Les deux formes doivent s'afficher pareil. */
+function versISO(v) {
+  if (estVide(v)) return "";
+  const s = String(v);
+  const m = s.match(/^\d{4}-\d{2}-\d{2}/);
+  if (m) return m[0];
+  const d = new Date(s);
+  return isNaN(d.getTime()) ? "" : d.toISOString().slice(0, 10);
+}
+function fmtDate(v) {
+  const iso = versISO(v);
+  if (!iso) return estVide(v) ? "" : String(v);
+  const [a, m, j] = iso.split("-");
+  return `${j}/${m}/${a}`;
+}
+
+/* Le classeur est un modèle : ses lignes réservées portent déjà 0 et « - »,
+   et une ligne de points sert à figer l'étendue de la feuille. Rien de tout
+   cela n'est un enregistrement. */
+const NEUTRES = new Set(["", "-", ".", "0", "0.0"]);
+const ligneRenseignee = cols => row => cols.some(c => {
+  const v = row[c];
+  return v !== null && v !== undefined && !NEUTRES.has(String(v).trim());
+});
+
+/* ------------------------------------------------------------------ store */
+const store = new SheetStore();
+StatusDot(document.getElementById("status"), store, { labels: { connected: t.connecte, reconnecting: t.reconnexion } });
+
+const alertEl = document.getElementById("alert");
+function alerte(msg) { alertEl.textContent = msg; alertEl.hidden = false; }
+function effacerAlerte() { alertEl.hidden = true; }
+
+let idChamp = 0;
+let construit = false;
+store.subscribe(construire);
+store.start();
+
+/* ----------------------------------------------------- construction de la page
+ * Les noms de feuilles et de colonnes n'existent qu'une fois la première
+ * charge arrivée, donc les blocs sont montés à ce moment-là plutôt que
+ * rafraîchis après coup. D'ici là, la page affiche son état de chargement.
+ */
+function construire() {
+  if (construit) return;
+  const noms = store.sheetNames();
+  if (!noms.length) return;
+  construit = true;
+
+  const SH_C = noms.find(n => n === "Commandes") || noms[0];
+  const SH_P = noms.find(n => n === "Prix");
+  const SH_PARAM = noms.find(n => n.startsWith("Param"));
+
+  /* Les colonnes réelles s'arrêtent avant les colonnes techniques (colN) que
+     le modèle utilise pour ses listes de validation. */
+  const enTetes = sh => store.sheet(sh).headers;
+  const reelles = sh => enTetes(sh).filter(h => !/^col\d+$/.test(h));
+
+  const C = enTetes(SH_C);                 // 0 Date Commande … 8 Livraison à relancer ?
+  const COLS_C = reelles(SH_C);
+  const remplieC = ligneRenseignee(COLS_C);
+
+  /* Listes du classeur ----------------------------------------------------
+   * La feuille Paramètres tient les listes que le modèle veut voir saisies,
+   * et la colonne technique de « Satut » tient sa liste de validation. On les
+   * lit plutôt que de retaper des valeurs en dur : le fichier reste la source.
+   */
+  const listeParam = idx => {
+    if (!SH_PARAM) return [];
+    const p = store.sheet(SH_PARAM);
+    const cle = p.headers[idx];
+    if (!cle) return [];
+    return p.rows.map(r => r[cle])
+      .filter(v => !estVide(v))
+      .map(v => String(v).trim())
+      .filter(v => v !== "Produits" && v !== "Fournisseurs" && !/^Pour ajouter/i.test(v));
+  };
+  const LISTE_FOURNISSEURS = listeParam(5);
+  const LISTE_PRODUITS = listeParam(0);
+  const colStatutSource = enTetes(SH_C).find(h => /^col\d+$/.test(h) && columnValues(store.sheet(SH_C), h).length);
+  const LISTE_STATUTS = colStatutSource ? columnValues(store.sheet(SH_C), colStatutSource) : columnValues(store.sheet(SH_C), C[7]);
+
+  const options = (base, sh, col, courant) => {
+    const set = new Set([""]);
+    base.forEach(v => set.add(v));
+    columnValues(store.sheet(sh), col).forEach(v => { if (!NEUTRES.has(v)) set.add(v); });
+    if (!estVide(courant)) set.add(String(courant));
+    return [...set];
+  };
+
+  document.getElementById("loading").hidden = true;
+  document.getElementById("footnote").hidden = false;
+
+  /* ------------------------------------------------------------- onglets */
+  const vues = { [SH_C]: document.getElementById("view-commandes") };
+  if (SH_P) vues[SH_P] = document.getElementById("view-prix");
+  const nomsOnglets = Object.keys(vues);
+  const afficherVue = nom => nomsOnglets.forEach(n => { vues[n].hidden = n !== nom; });
+  if (nomsOnglets.length > 1) {
+    Tabs(document.getElementById("tabs"), nomsOnglets, { onSelect: afficherVue });
+  }
+  afficherVue(SH_C);
+
+  /* --------------------------------------------------------------- tuiles */
+  const tuiles = document.getElementById("tiles");
+  const commandesRemplies = rows => rows.filter(remplieC);
+  StatTile(tuiles, store, {
+    label: "Montant commandé", sheet: SH_C, format: fmtEuros,
+    compute: rows => commandesRemplies(rows).reduce((a, r) => a + (Number(r[C[2]]) || 0), 0),
+  });
+  StatTile(tuiles, store, {
+    label: "Reste à régler", sheet: SH_C, format: fmtEuros,
+    compute: rows => commandesRemplies(rows).reduce((a, r) => a + (Number(r[C[2]]) || 0) - (Number(r[C[4]]) || 0), 0),
+  });
+  StatTile(tuiles, store, {
+    label: "Livraisons en attente", sheet: SH_C, format: v => String(v),
+    compute: rows => commandesRemplies(rows).filter(r => estVide(r[C[3]])).length,
+  });
+
+  /* --------------------------------------------------- tableau + filtres */
+  const grilleC = DataGrid(document.getElementById("grid-commandes"), store, {
+    sheet: SH_C,
+    columns: COLS_C,
+    editable: false,          // 9 colonnes, des dates et des montants mis en forme : la saisie passe par la fiche
+    onRowClick: row => ouvrirFiche("commandes", SH_C, row),
+    format: {
+      [C[0]]: fmtDate, [C[3]]: fmtDate, [C[5]]: fmtDate,
+      [C[2]]: fmtEuros, [C[4]]: fmtEuros,
+    },
+    labels: { range: t.plage, matches: t.lignes },
+  });
+
+  const epingleesC = new Set();   // lignes ajoutées pendant la session : visibles même vides
+  let rechercheC = null, masquerVidesC = true, statutC = "";
+
+  const filtrerC = () => {
+    grilleC.setFilter(r =>
+      (!masquerVidesC || remplieC(r) || epingleesC.has(r._row)) &&
+      (!rechercheC || rechercheC(r)) &&
+      (!statutC || String(r[C[7]] ?? "") === statutC));
+    majVideC();
+  };
+  const majVideC = () => {
+    const total = store.sheet(SH_C).rows.filter(remplieC).length;
+    const el = document.getElementById("vide-commandes");
+    const visibles = document.querySelectorAll("#grid-commandes tbody tr").length;
+    el.hidden = visibles > 0;
+    el.textContent = total === 0 ? t.aucuneCommande : t.aucunResultat;
+  };
+
+  SearchBox(document.getElementById("search-commandes"), {
+    placeholder: t.rechercher,
+    columns: COLS_C,
+    onChange: f => { rechercheC = f; filtrerC(); },
+  });
+
+  const selStatut = document.getElementById("filtre-statut");
+  [["", t.tousStatuts], ...LISTE_STATUTS.map(v => [v, v])].forEach(([v, l]) => selStatut.appendChild(new Option(l, v)));
+  selStatut.onchange = () => { statutC = selStatut.value; filtrerC(); };
+
+  const caseVidesC = document.getElementById("vides-commandes");
+  caseVidesC.onchange = () => { masquerVidesC = caseVidesC.checked; filtrerC(); };
+
+  document.getElementById("ajouter-commande").onclick = () =>
+    ajouter(SH_C, { [C[7]]: "-" }, epingleesC, filtrerC, row => ouvrirFiche("commandes", SH_C, row));
+
+  store.subscribe(majVideC);
+  filtrerC();
+
+  /* ------------------------------------------------------------ graphique
+   * ChartBlock agrège toutes les lignes que le store lui donne, or le modèle
+   * en réserve des centaines de vides qui formeraient un groupe « » à côté
+   * des vrais fournisseurs. Une vue en lecture seule du store suffit à les
+   * écarter, sans toucher à l'API du bloc.
+   */
+  const storeFiltre = {
+    subscribe: fn => store.subscribe(fn),
+    sheet: () => {
+      const d = store.sheet(SH_C);
+      return { ...d, rows: d.rows.filter(remplieC) };
+    },
+  };
+  const chartEl = document.getElementById("chart-commandes");
+  const chartVide = document.getElementById("chart-vide");
+  if (typeof Chart === "undefined") {
+    chartEl.hidden = true;
+    chartVide.hidden = false;
+    chartVide.textContent = t.echecGraphique;
+  } else {
+    ChartBlock(chartEl, storeFiltre, {
+      sheet: SH_C, x: C[1], y: C[2], type: "bar", aggregate: "sum", label: C[2],
+    });
+    const majChart = () => {
+      // Des barres toutes à zéro ne répondent à rien : tant qu'aucun montant
+      // n'est saisi, la phrase est plus utile que le graphique.
+      const vide = !store.sheet(SH_C).rows.some(r => remplieC(r) && Number(r[C[2]]) > 0);
+      chartEl.hidden = vide;
+      chartVide.hidden = !vide;
+    };
+    store.subscribe(majChart);
+    majChart();
+  }
+
+  /* ------------------------------------------------------------- vue Prix */
+  let champsPrix = () => [];
+  if (SH_P) {
+    const P = enTetes(SH_P);      // 0 Fournisseurs … 6 Prix de vente
+    const COLS_P = reelles(SH_P);
+    const remplieP = ligneRenseignee(COLS_P);
+
+    const grilleP = DataGrid(document.getElementById("grid-prix"), store, {
+      sheet: SH_P,
+      columns: COLS_P,
+      editable: false,
+      onRowClick: row => ouvrirFiche("prix", SH_P, row),
+      format: {
+        [P[2]]: fmtEuros, [P[3]]: fmtEuros, [P[4]]: fmtEuros, [P[6]]: fmtEuros,
+        [P[5]]: fmtPourcent,
+      },
+      labels: { range: t.plage, matches: t.lignes },
+    });
+
+    const epingleesP = new Set();
+    let rechercheP = null, masquerVidesP = true;
+    const filtrerP = () => {
+      grilleP.setFilter(r => (!masquerVidesP || remplieP(r) || epingleesP.has(r._row)) && (!rechercheP || rechercheP(r)));
+      majVideP();
+    };
+    const majVideP = () => {
+      const total = store.sheet(SH_P).rows.filter(remplieP).length;
+      const el = document.getElementById("vide-prix");
+      el.hidden = document.querySelectorAll("#grid-prix tbody tr").length > 0;
+      el.textContent = total === 0 ? t.aucunTarif : t.aucunResultat;
+    };
+
+    SearchBox(document.getElementById("search-prix"), {
+      placeholder: t.rechercher, columns: COLS_P,
+      onChange: f => { rechercheP = f; filtrerP(); },
+    });
+    const caseVidesP = document.getElementById("vides-prix");
+    caseVidesP.onchange = () => { masquerVidesP = caseVidesP.checked; filtrerP(); };
+    document.getElementById("ajouter-prix").onclick = () =>
+      ajouter(SH_P, { [P[2]]: 0, [P[3]]: 0, [P[5]]: 0 }, epingleesP, filtrerP, row => ouvrirFiche("prix", SH_P, row));
+
+    store.subscribe(majVideP);
+    filtrerP();
+
+    champsPrix = row => [
+      { col: P[0], type: "select", options: options(LISTE_FOURNISSEURS, SH_P, P[0], row[P[0]]) },
+      { col: P[1], type: "select", options: options(LISTE_PRODUITS, SH_P, P[1], row[P[1]]) },
+      { col: P[2], type: "number" },
+      { col: P[3], type: "number" },
+      { col: P[4], type: "number" },
+      { col: P[5], type: "number", hint: t.indiceMarge },
+      { col: P[6], type: "number" },
+    ];
+  }
+
+  /* ---------------------------------------------------------------- fiche
+   * RecordForm infère ses listes à partir des valeurs déjà présentes dans la
+   * colonne, ce qui ne donne rien sur un classeur encore vide. La fiche est
+   * donc montée ici pour pouvoir alimenter chaque liste depuis les listes du
+   * classeur, avec les mêmes conventions (un champ, un enregistrement).
+   */
+  const champsCommande = row => [
+    { col: C[0], type: "date" },
+    { col: C[1], type: "select", options: options(LISTE_FOURNISSEURS, SH_C, C[1], row[C[1]]) },
+    { col: C[2], type: "number" },
+    { col: C[3], type: "date" },
+    { col: C[4], type: "number" },
+    { col: C[5], type: "date" },
+    { col: C[6], type: "text" },
+    { col: C[7], type: "select", options: options(LISTE_STATUTS, SH_C, C[7], row[C[7]]) },
+    { col: C[8], type: "text" },
+  ];
+
+  function ouvrirFiche(quelle, sheet, row) {
+    const hote = document.getElementById(quelle === "prix" ? "fiche-prix" : "fiche-commandes");
+    const champs = quelle === "prix" ? champsPrix(row) : champsCommande(row);
+    const titre = quelle === "prix" ? t.fichePrix : t.ficheCommande;
+    hote.textContent = "";
+    hote.hidden = false;
+
+    const panneau = el("div", "ss-panel ss-stack");
+    const tete = el("div", "fiche-head");
+    const bloc = el("div", "ss-grow");
+    bloc.appendChild(el("h2", "", titre));
+    bloc.appendChild(el("div", "ss-muted", t.ligneFichier(row._row)));
+    const fermer = el("button", "ss-btn ss-shrink", t.fermer);
+    fermer.type = "button";
+    fermer.onclick = () => { hote.hidden = true; hote.textContent = ""; };
+    tete.append(bloc, fermer);
+    panneau.appendChild(tete);
+
+    const form = el("div", "ss-form");
+    champs.forEach(({ col, type, options: opts, hint }) => {
+      if (store.isFormulaCell(sheet, row._row, col)) return;   // colonne calculée par le classeur
+      const enveloppe = el("div", "ss-form-field");
+      const etiquette = el("label", "ss-form-label", col);
+      enveloppe.appendChild(etiquette);
+      const champ = FieldInput(enveloppe, {
+        type,
+        value: type === "date" ? versISO(row[col]) : (row[col] ?? ""),
+        options: opts || [],
+        onChange: async valeur => {
+          if (String(valeur) === String(row[col] ?? "")) return;
+          // Un montant écrit en texte casse les formats monétaires et les
+          // totaux du classeur : les champs numériques repartent en nombre.
+          const aEcrire = (type === "number" && !estVide(valeur) && !isNaN(Number(valeur)))
+            ? Number(valeur) : valeur;
+          row[col] = aEcrire;
+          try { await store.saveCell(sheet, row._row, col, aEcrire); effacerAlerte(); }
+          catch { alerte(t.echecEnregistrement); }
+        },
+      });
+      const id = "champ-" + (++idChamp);
+      champ.el.id = id;
+      etiquette.htmlFor = id;
+      if (hint) enveloppe.appendChild(el("div", "ss-muted", hint));
+      form.appendChild(enveloppe);
+    });
+    panneau.appendChild(form);
+    hote.appendChild(panneau);
+    fermer.focus();
+  }
+
+  /* Le modèle réserve un long bloc de lignes préformatées : le serveur écrit
+     la nouvelle ligne dans la première réellement libre, à l'intérieur du
+     bloc, donc dans la portée des plages du classeur.
+     Une ligne créée entièrement à blanc n'existe pas pour autant : openpyxl
+     ramène une chaîne vide à une cellule vide, et une ligne sans aucune
+     valeur est écartée à la lecture. On lui donne donc les valeurs par
+     défaut du modèle lui-même (« - » pour le statut, 0 pour les montants),
+     comme sur les lignes réservées d'origine. Elle n'est pas « renseignée »
+     pour autant : on l'épingle pour qu'elle reste visible malgré le filtre,
+     et on ouvre sa fiche pour la remplir tout de suite. */
+  async function ajouter(sheet, valeursInitiales, epinglees, filtrer, ouvrir) {
+    const avant = new Set(store.sheet(sheet).rows.map(r => r._row));
+    try {
+      await store.addRow(sheet, valeursInitiales);
+      await store.refresh();
+    } catch { alerte(t.echecAjout); return; }
+    const nouvelle = store.sheet(sheet).rows.find(r => !avant.has(r._row));
+    if (!nouvelle) { alerte(t.echecAjout); return; }
+    effacerAlerte();
+    epinglees.add(nouvelle._row);
+    filtrer();
+    ouvrir(nouvelle);
+  }
+
+  document.addEventListener("keydown", e => {
+    if (e.key !== "Escape") return;
+    ["fiche-commandes", "fiche-prix"].forEach(id => {
+      const n = document.getElementById(id);
+      if (!n.hidden) { n.hidden = true; n.textContent = ""; }
+    });
+  });
+}
+</script>
+</body>
+</html>
