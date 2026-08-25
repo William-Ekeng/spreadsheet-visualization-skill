@@ -120,11 +120,6 @@ STATE = {
     "payload": None,
     "stale": False,         # an external edit landed; reload before serving
     "reload_timer": None,
-    # Counts external edits only, never our own writes. The background
-    # warm-up adopts its parse only if this has not moved; version can't
-    # serve that check any more, because it now moves on every keystroke.
-    "external": 0,
-
     # --- write side ---------------------------------------------------
     # One workbook is held open so an edit costs a save rather than a
     # parse plus a save. wb_path is where a flush writes: the file that
@@ -909,7 +904,6 @@ class _ChangeHandler(FileSystemEventHandler):
             if not ours and STATE["dirty"]:
                 return   # our own unsaved edits are still in flight
             if not ours and time.time() - STATE["last_self_write"] > 0.75:
-                STATE["external"] += 1
                 # Somebody else changed the file, so the workbook held open
                 # for writes is now stale. Dropping it forces the next write
                 # to re-read from disk; saving the stale copy instead would
@@ -1280,10 +1274,15 @@ def api_data():
     _load_model()
     with MODEL_LOCK:
         cached = STATE["payload"]
-        if cached is None or cached[0] != STATE["version"]:
-            cached = (STATE["version"],
-                      _dumps({"version": STATE["version"], "sheets": STATE["sheets"] or {}}))
-            STATE["payload"] = cached
+        stale = cached is None or cached[0] != STATE["version"]
+        if stale:
+            version, sheets = STATE["version"], STATE["sheets"] or {}
+    if stale:
+        cached = (version, _dumps({"version": version, "sheets": sheets}))
+        with MODEL_LOCK:
+            if STATE["payload"] is None or STATE["payload"][0] != version:
+                STATE["payload"] = cached
+            cached = STATE["payload"]
     return app.response_class(cached[1], mimetype="application/json")
 
 
